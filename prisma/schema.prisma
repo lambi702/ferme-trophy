@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ItemType {
+  BONUS_SELF
+  MALUS_OTHER
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  createdAt    DateTime @default(now())
+}
+
+model Team {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  unitName      String
+  dossardNumber Int?     @unique
+  pinHash       String
+  foulardName   String   @default("")
+  foulardColor  String   @default("#e10600")
+  foulardEmoji  String   @default("🏁")
+  createdAt     DateTime @default(now())
+
+  pointsTransactions PointsTransaction[]
+  purchasesMade      Purchase[]           @relation("BuyingTeam")
+  purchasesTargeted  Purchase[]           @relation("TargetTeam")
+  raceAdjustments    RaceAdjustment[]
+}
+
+model Organizer {
+  id          String   @id @default(cuid())
+  displayName String
+  pinHash     String
+  createdAt   DateTime @default(now())
+
+  pointsTransactions PointsTransaction[]
+}
+
+model PointsTransaction {
+  id          String   @id @default(cuid())
+  teamId      String
+  organizerId String?
+  points      Int
+  reason      String
+  createdAt   DateTime @default(now())
+
+  team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  organizer Organizer? @relation(fields: [organizerId], references: [id], onDelete: SetNull)
+
+  @@index([teamId])
+}
+
+model MarketplaceItem {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  costPoints  Int
+  type        ItemType
+  lapEffect   Int
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  purchases Purchase[]
+}
+
+model Purchase {
+  id           String   @id @default(cuid())
+  buyingTeamId String
+  targetTeamId String?
+  itemId       String
+  costPoints   Int
+  createdAt    DateTime @default(now())
+
+  buyingTeam Team            @relation("BuyingTeam", fields: [buyingTeamId], references: [id], onDelete: Cascade)
+  targetTeam Team?           @relation("TargetTeam", fields: [targetTeamId], references: [id], onDelete: Cascade)
+  item       MarketplaceItem @relation(fields: [itemId], references: [id])
+  adjustment RaceAdjustment?
+
+  @@index([buyingTeamId])
+  @@index([targetTeamId])
+}
+
+model RaceLapEvent {
+  id            String   @id @default(cuid())
+  dossardNumber Int
+  timestamp     DateTime
+  source        String
+  rawPayload    Json?
+  createdAt     DateTime @default(now())
+
+  @@index([dossardNumber])
+}
+
+model RaceAdjustment {
+  id         String   @id @default(cuid())
+  teamId     String
+  lapDelta   Int
+  source     String
+  purchaseId String?  @unique
+  createdAt  DateTime @default(now())
+
+  team     Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  purchase Purchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+
+  @@index([teamId])
+}
