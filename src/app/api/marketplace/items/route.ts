@@ -1,21 +1,29 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { jsonError, requireAdmin } from '@/lib/api-helpers'
+import { jsonError, requireAdmin, requireOrganizer } from '@/lib/api-helpers'
 
-// Public (visible depuis la page équipe, même avant déverrouillage par PIN) :
-// seuls les items actifs, sans détails internes.
+// Public (visible par tous, PIN équipe pas nécessaire pour consulter le
+// catalogue — seul l'achat est réservé aux équipes déverrouillées) :
+// visiteurs anonymes = items actifs seulement. Comité/organisateurs voient
+// aussi les items désactivés (pour pouvoir les réactiver).
 export async function GET(req: NextRequest) {
   const admin = await requireAdmin(req)
+  const organizer = admin ? null : await requireOrganizer(req)
+  const canSeeInactive = Boolean(admin || organizer)
+
   const items = await prisma.marketplaceItem.findMany({
-    where: admin ? {} : { active: true },
+    where: canSeeInactive ? {} : { active: true },
     orderBy: { costPoints: 'asc' },
   })
   return NextResponse.json(items)
 }
 
+// Édition du catalogue : comité ET organisateurs (les prix doivent rester
+// ajustables sur le terrain le jour J, pas juste par le comité).
 export async function POST(req: NextRequest) {
   const admin = await requireAdmin(req)
-  if (!admin) return jsonError('Non autorisé', 403)
+  const organizer = admin ? null : await requireOrganizer(req)
+  if (!admin && !organizer) return jsonError('Non autorisé', 403)
 
   const { name, description, costPoints, type, lapEffect } = await req.json()
   if (!name || !['BONUS_SELF', 'MALUS_OTHER'].includes(type)) {

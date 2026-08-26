@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { jsonError, requireAdmin } from '@/lib/api-helpers'
+import { jsonError, requireAdmin, requireOrganizer } from '@/lib/api-helpers'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const admin = await requireAdmin(req)
-  if (!admin) return jsonError('Non autorisé', 403)
+  const organizer = admin ? null : await requireOrganizer(req)
+  if (!admin && !organizer) return jsonError('Non autorisé', 403)
 
   const body = await req.json()
   const data: Record<string, unknown> = {}

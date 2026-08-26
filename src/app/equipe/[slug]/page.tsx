@@ -51,11 +51,13 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
         setFoulardName(data.foulardName)
       }
     })
+  // Catalogue + prix : public, visible sans PIN (seul l'achat est réservé).
+  const loadItems = () => fetch('/api/marketplace/items').then((r) => r.json()).then(setItems)
 
   useEffect(() => {
     loadPublic()
     loadMe()
-    fetch('/api/marketplace/items').then((r) => r.json()).then(setItems)
+    loadItems()
     fetch('/api/teams/public').then((r) => r.json()).then(setOthers)
   }, [slug])
 
@@ -143,60 +145,66 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
           <button className="w-full bg-ft-red text-white font-mono-race font-bold py-2.5 rounded-lg">Déverrouiller</button>
         </form>
       ) : (
-        <>
-          <div className="card p-5 mt-4">
-            <p className="font-mono-race font-bold text-sm mb-3">⭐ Solde de points : <span className="text-ft-gold text-xl">{me.pointsBalance}</span></p>
+        <div className="card p-5 mt-4">
+          <p className="font-mono-race font-bold text-sm mb-3">⭐ Solde de points : <span className="text-ft-gold text-xl">{me.pointsBalance}</span></p>
 
-            <p className="text-xs font-mono-race text-white/50 mb-1">Nom du foulard</p>
-            <input
-              value={foulardName}
-              onChange={(e) => setFoulardName(e.target.value)}
-              onBlur={() => saveFoulardField('foulardName', foulardName)}
-              placeholder="ex: Écurie Faucons Rouges"
-              className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
-            />
+          <p className="text-xs font-mono-race text-white/50 mb-1">Nom du foulard</p>
+          <input
+            value={foulardName}
+            onChange={(e) => setFoulardName(e.target.value)}
+            onBlur={() => saveFoulardField('foulardName', foulardName)}
+            placeholder="ex: Écurie Faucons Rouges"
+            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
+          />
 
-            <p className="text-xs font-mono-race text-white/50 mb-1">Couleur</p>
-            <input
-              type="color"
-              defaultValue={me.foulardColor}
-              onChange={(e) => saveFoulardField('foulardColor', e.target.value)}
-              className="w-16 h-9 rounded mb-3 bg-transparent"
-            />
+          <p className="text-xs font-mono-race text-white/50 mb-1">Couleur</p>
+          <input
+            type="color"
+            defaultValue={me.foulardColor}
+            onChange={(e) => saveFoulardField('foulardColor', e.target.value)}
+            className="w-16 h-9 rounded mb-3 bg-transparent"
+          />
 
-            <p className="text-xs font-mono-race text-white/50 mb-1">Emoji</p>
-            <div className="flex flex-wrap gap-1.5">
-              {EMOJIS.map((e) => (
-                <button
-                  key={e}
-                  onClick={() => saveFoulardField('foulardEmoji', e)}
-                  className={`text-xl p-1.5 rounded-md ${me.foulardEmoji === e ? 'bg-ft-red' : 'bg-white/5'}`}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
+          <p className="text-xs font-mono-race text-white/50 mb-1">Emoji</p>
+          <div className="flex flex-wrap gap-1.5">
+            {EMOJIS.map((e) => (
+              <button
+                key={e}
+                onClick={() => saveFoulardField('foulardEmoji', e)}
+                className={`text-xl p-1.5 rounded-md ${me.foulardEmoji === e ? 'bg-ft-red' : 'bg-white/5'}`}
+              >
+                {e}
+              </button>
+            ))}
           </div>
-
-          <div className="card p-5 mt-4">
-            <p className="font-mono-race font-bold text-sm mb-3">🏪 Marketplace</p>
-            {purchaseMsg && <p className="text-sm mb-3">{purchaseMsg}</p>}
-            <div className="space-y-3">
-              {items.map((item) => (
-                <MarketItemRow key={item.id} item={item} others={others.filter((o) => o.slug !== slug)} onBuy={handlePurchase} />
-              ))}
-              {items.length === 0 && <p className="text-white/40 text-sm">Aucun item disponible pour l'instant.</p>}
-            </div>
-          </div>
-        </>
+        </div>
       )}
+
+      {/* Catalogue + prix visibles par tous — seul l'achat exige le PIN de l'équipe. */}
+      <div className="card p-5 mt-4">
+        <p className="font-mono-race font-bold text-sm mb-1">🏪 Marketplace</p>
+        {!me && <p className="text-white/40 text-xs mb-3">Déverrouille ta page ci-dessus pour pouvoir acheter.</p>}
+        {purchaseMsg && <p className="text-sm mb-3">{purchaseMsg}</p>}
+        <div className="space-y-3">
+          {items.map((item) => (
+            <MarketItemRow
+              key={item.id}
+              item={item}
+              others={others.filter((o) => o.slug !== slug)}
+              locked={!me}
+              onBuy={handlePurchase}
+            />
+          ))}
+          {items.length === 0 && <p className="text-white/40 text-sm">Aucun item disponible pour l'instant.</p>}
+        </div>
+      </div>
     </main>
   )
 }
 
 function MarketItemRow({
-  item, others, onBuy,
-}: { item: MarketItem; others: OtherTeam[]; onBuy: (item: MarketItem, targetTeamId?: string) => void }) {
+  item, others, locked, onBuy,
+}: { item: MarketItem; others: OtherTeam[]; locked: boolean; onBuy: (item: MarketItem, targetTeamId?: string) => void }) {
   const [target, setTarget] = useState('')
   return (
     <div className="bg-ft-carbon rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
@@ -206,7 +214,7 @@ function MarketItemRow({
         <p className="text-ft-gold text-xs font-mono-race font-bold">{item.costPoints} pts</p>
       </div>
       <div className="flex items-center gap-2">
-        {item.type === 'MALUS_OTHER' && (
+        {!locked && item.type === 'MALUS_OTHER' && (
           <select
             value={target}
             onChange={(e) => setTarget(e.target.value)}
@@ -220,10 +228,10 @@ function MarketItemRow({
         )}
         <button
           onClick={() => onBuy(item, target || undefined)}
-          disabled={item.type === 'MALUS_OTHER' && !target}
+          disabled={locked || (item.type === 'MALUS_OTHER' && !target)}
           className="bg-ft-red text-white font-mono-race font-bold text-sm px-3 py-1.5 rounded-lg disabled:opacity-40"
         >
-          Acheter
+          {locked ? '🔒 Acheter' : 'Acheter'}
         </button>
       </div>
     </div>

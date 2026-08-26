@@ -1,29 +1,25 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { signSession, hashPin, verifyPin, COOKIE_NAMES } from '@/lib/auth'
+import { signSession, verifyPin, COOKIE_NAMES } from '@/lib/auth'
 import { jsonError } from '@/lib/api-helpers'
 
 /**
- * Self-service : si le nom n'existe pas encore, on crée le compte avec ce PIN.
- * S'il existe, le PIN doit correspondre. Pas de vérification email — voir
- * section 5 du handover ("création facile en self-service").
+ * Vérification uniquement — PAS d'auto-création. Les comptes organisateur
+ * sont créés par le comité (voir /api/organizers), justement pour éviter
+ * que n'importe qui se crée un accès et crédite des points à volonté
+ * (triche). Revirement volontaire par rapport à la section 5 du handover
+ * d'origine ("self-service") suite à un retour explicite du comité.
  */
 export async function POST(req: NextRequest) {
   const { displayName, pin } = await req.json()
   const name = String(displayName ?? '').trim()
   const pinStr = String(pin ?? '').trim()
 
-  if (!name) return jsonError('Nom requis')
-  if (!/^\d{4,6}$/.test(pinStr)) return jsonError('PIN à 4-6 chiffres requis')
+  if (!name || !pinStr) return jsonError('Nom et PIN requis')
 
-  let organizer = await prisma.organizer.findFirst({ where: { displayName: name } })
-
-  if (!organizer) {
-    organizer = await prisma.organizer.create({
-      data: { displayName: name, pinHash: await hashPin(pinStr) },
-    })
-  } else if (!(await verifyPin(pinStr, organizer.pinHash))) {
-    return jsonError('PIN incorrect pour ce nom (déjà utilisé par quelqu\'un d\'autre ?)', 401)
+  const organizer = await prisma.organizer.findFirst({ where: { displayName: name } })
+  if (!organizer || !(await verifyPin(pinStr, organizer.pinHash))) {
+    return jsonError('Compte introuvable ou PIN incorrect — demande au comité de te créer un accès.', 401)
   }
 
   const token = await signSession('organizer', organizer.id)
