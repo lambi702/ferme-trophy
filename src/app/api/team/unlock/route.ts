@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { signSession, verifyPin, COOKIE_NAMES } from '@/lib/auth'
+import { signSession, COOKIE_NAMES } from '@/lib/auth'
 import { jsonError } from '@/lib/api-helpers'
 
 export async function POST(req: NextRequest) {
@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   if (!slug || !pin) return jsonError('Slug et PIN requis')
 
   const team = await prisma.team.findUnique({ where: { slug: String(slug) } })
-  if (!team || !(await verifyPin(String(pin), team.pinHash))) {
+  if (!team || team.pin !== String(pin)) {
     return jsonError('PIN incorrect', 401)
   }
 

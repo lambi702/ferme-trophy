@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 type Me = { id: string; displayName: string }
-type TeamLite = { id: string; unitName: string; dossardNumber: number | null; foulardEmoji: string }
+type TeamLite = { id: string; unitName: string; dossardNumbers: number[]; foulardEmoji: string }
 type Item = {
   id: string; name: string; description: string; costPoints: number
   type: 'BONUS_SELF' | 'MALUS_OTHER'; lapEffect: number; active: boolean
@@ -104,7 +104,14 @@ export default function OrganisateurPage() {
   return (
     <main className="min-h-screen px-4 py-8 max-w-lg mx-auto">
       <Link href="/" className="font-mono-race text-ft-silver text-sm">← Ferme Trophy</Link>
-      <h1 className="font-mono-race text-2xl font-bold mt-4 mb-6">🎮 Mini-jeux</h1>
+      <div className="flex items-center justify-between mt-4 mb-6">
+        <h1 className="font-mono-race text-2xl font-bold">🎮 Mini-jeux</h1>
+        {me && (
+          <Link href="/organisateur/equipes" className="bg-ft-gold text-ft-bg font-mono-race font-bold text-sm px-4 py-2 rounded-lg">
+            🏎️ Équipes & dossards
+          </Link>
+        )}
+      </div>
 
       {!me ? (
         <form onSubmit={handleLogin} className="card p-5 space-y-3">
@@ -134,7 +141,9 @@ export default function OrganisateurPage() {
             >
               <option value="">Choisir une équipe...</option>
               {teams.map((t) => (
-                <option key={t.id} value={t.id}>{t.foulardEmoji} #{t.dossardNumber ?? '?'} — {t.unitName}</option>
+                <option key={t.id} value={t.id}>
+                  {t.foulardEmoji} {t.dossardNumbers.map((n) => `#${n}`).join(' ') || '(sans dossard)'} — {t.unitName || 'équipe vierge'}
+                </option>
               ))}
             </select>
             <input

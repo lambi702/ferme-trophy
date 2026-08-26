@@ -26,6 +26,13 @@ Le handover initial (section 5) demandait un **self-service** pour les comptes o
 - Les organisateurs gardent le droit d'éditer le catalogue marketplace (prix, activer/désactiver) — voir `/api/marketplace/items` — mais pas de créer d'autres comptes organisateur (admin only).
 - Le catalogue marketplace (items + prix) est **public**, sans PIN — seul l'achat proprement dit exige le PIN de l'équipe (`/api/marketplace/purchase`).
 
+## ⚠️ Revirement volontaire vs le handover d'origine : PIN équipe en clair + multi-dossards
+Deux changements de fond suite à un retour direct du comité :
+- **`Team.pin` est stocké EN CLAIR** (pas de hash, contrairement à `Organizer.pinHash`/`AdminUser.passwordHash`). Décision assumée : les organisateurs doivent pouvoir retrouver le PIN d'une équipe à tout moment pour le recommuniquer (badge/QR perdu, équipe qui a oublié) — un hash à sens unique rendrait ça impossible. Enjeu jugé faible (pas de données sensibles derrière un PIN d'équipe scoute). `GET /api/teams` renvoie donc le PIN en clair à tout comité/organisateur authentifié — **ne jamais exposer cette route sans authentification**.
+- **Une équipe peut avoir plusieurs dossards** (plusieurs vélos) — `Team.dossardNumber` (unique, 1-1) a été remplacé par un modèle `Dossard` séparé (`teamId` nullable, relation 1-N). `computeCourseLeaderboard()` (`src/lib/leaderboard.ts`) additionne les tours de TOUS les dossards d'une équipe. Gestion des dossards : `/api/dossards` (pool, création par plage) + `/api/dossards/{id}` PATCH (assignation à une équipe) — comité ET organisateurs.
+- **Les équipes sont créées VIERGES par défaut** (`unitName`/`sectionName`/`foulardName` vides) — `POST /api/teams` sans `unitNames` crée `count` équipes vides avec juste un slug technique (`equipe`, `equipe-2`...) et un PIN. C'est l'équipe elle-même qui se personnalise ensuite via `/api/teams/{slug}/foulard` (nom d'unité, nom de section, foulard). Le slug ne change JAMAIS après création (déjà imprimé sur le QR code) même si le nom change.
+- **Création d'équipe + assignation de dossard ouvertes aux organisateurs**, pas juste au comité (`src/components/TeamsAndDossardsManager.tsx`, réutilisé par `/admin/equipes` et `/organisateur/equipes`).
+
 ## Déployer un changement (sans migration de schéma)
 ```bash
 docker compose build web && docker compose up -d web

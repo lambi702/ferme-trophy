@@ -1,29 +1,33 @@
 import { prisma } from './prisma'
 
 export async function computeCourseLeaderboard() {
-  const teams = await prisma.team.findMany({ where: { dossardNumber: { not: null } } })
+  const teams = await prisma.team.findMany({ include: { dossards: true } })
   const lapCounts = await prisma.raceLapEvent.groupBy({ by: ['dossardNumber'], _count: { _all: true } })
   const adjustments = await prisma.raceAdjustment.groupBy({ by: ['teamId'], _sum: { lapDelta: true } })
 
   const lapByDossard = new Map(lapCounts.map((l) => [l.dossardNumber, l._count._all]))
   const adjByTeam = new Map(adjustments.map((a) => [a.teamId, a._sum.lapDelta ?? 0]))
 
-  const rows = teams.map((team) => {
-    const rawLaps = lapByDossard.get(team.dossardNumber as number) ?? 0
-    const adjustment = adjByTeam.get(team.id) ?? 0
-    return {
-      teamId: team.id,
-      slug: team.slug,
-      unitName: team.unitName,
-      dossardNumber: team.dossardNumber,
-      foulardName: team.foulardName,
-      foulardColor: team.foulardColor,
-      foulardEmoji: team.foulardEmoji,
-      rawLaps,
-      adjustment,
-      adjustedLaps: rawLaps + adjustment,
-    }
-  })
+  const rows = teams
+    .filter((team) => team.dossards.length > 0)
+    .map((team) => {
+      // Plusieurs vélos possibles par équipe (section) — on additionne les tours de chaque dossard.
+      const rawLaps = team.dossards.reduce((sum, d) => sum + (lapByDossard.get(d.number) ?? 0), 0)
+      const adjustment = adjByTeam.get(team.id) ?? 0
+      return {
+        teamId: team.id,
+        slug: team.slug,
+        unitName: team.unitName,
+        sectionName: team.sectionName,
+        dossardNumbers: team.dossards.map((d) => d.number).sort((a, b) => a - b),
+        foulardName: team.foulardName,
+        foulardColor: team.foulardColor,
+        foulardEmoji: team.foulardEmoji,
+        rawLaps,
+        adjustment,
+        adjustedLaps: rawLaps + adjustment,
+      }
+    })
 
   rows.sort((a, b) => b.adjustedLaps - a.adjustedLaps)
   return rows.map((r, i) => ({ ...r, rank: i + 1 }))
@@ -44,6 +48,7 @@ export async function computePointsLeaderboard() {
       teamId: team.id,
       slug: team.slug,
       unitName: team.unitName,
+      sectionName: team.sectionName,
       foulardName: team.foulardName,
       foulardColor: team.foulardColor,
       foulardEmoji: team.foulardEmoji,

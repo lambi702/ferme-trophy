@@ -16,15 +16,25 @@ CREATE TABLE "AdminUser" (
 CREATE TABLE "Team" (
     "id" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
-    "unitName" TEXT NOT NULL,
-    "dossardNumber" INTEGER,
-    "pinHash" TEXT NOT NULL,
+    "pin" TEXT NOT NULL,
+    "unitName" TEXT NOT NULL DEFAULT '',
+    "sectionName" TEXT NOT NULL DEFAULT '',
     "foulardName" TEXT NOT NULL DEFAULT '',
     "foulardColor" TEXT NOT NULL DEFAULT '#e10600',
     "foulardEmoji" TEXT NOT NULL DEFAULT '🏁',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Team_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Dossard" (
+    "id" TEXT NOT NULL,
+    "number" INTEGER NOT NULL,
+    "teamId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Dossard_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -106,7 +116,10 @@ CREATE UNIQUE INDEX "AdminUser_email_key" ON "AdminUser"("email");
 CREATE UNIQUE INDEX "Team_slug_key" ON "Team"("slug");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Team_dossardNumber_key" ON "Team"("dossardNumber");
+CREATE UNIQUE INDEX "Team_pin_key" ON "Team"("pin");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Dossard_number_key" ON "Dossard"("number");
 
 -- CreateIndex
 CREATE INDEX "PointsTransaction_teamId_idx" ON "PointsTransaction"("teamId");
@@ -125,6 +138,9 @@ CREATE UNIQUE INDEX "RaceAdjustment_purchaseId_key" ON "RaceAdjustment"("purchas
 
 -- CreateIndex
 CREATE INDEX "RaceAdjustment_teamId_idx" ON "RaceAdjustment"("teamId");
+
+-- AddForeignKey
+ALTER TABLE "Dossard" ADD CONSTRAINT "Dossard_teamId_fkey" FOREIGN KEY ("teamId") REFERENCES "Team"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PointsTransaction" ADD CONSTRAINT "PointsTransaction_teamId_fkey" FOREIGN KEY ("teamId") REFERENCES "Team"("id") ON DELETE CASCADE ON UPDATE CASCADE;

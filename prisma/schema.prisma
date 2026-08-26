@@ -21,20 +21,36 @@ model AdminUser {
 }
 
 model Team {
-  id            String   @id @default(cuid())
-  slug          String   @unique
-  unitName      String
-  dossardNumber Int?     @unique
-  pinHash       String
-  foulardName   String   @default("")
-  foulardColor  String   @default("#e10600")
-  foulardEmoji  String   @default("🏁")
-  createdAt     DateTime @default(now())
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  // "pin" est VOLONTAIREMENT en clair (pas de hash) : les organisateurs
+  // doivent pouvoir le retrouver à tout moment pour le recommuniquer à une
+  // équipe qui l'a perdu. Enjeu faible (pas de données sensibles derrière),
+  // décision explicite du comité — voir AGENTS.md.
+  pin          String   @unique
+  unitName     String   @default("")
+  sectionName  String   @default("")
+  foulardName  String   @default("")
+  foulardColor String   @default("#e10600")
+  foulardEmoji String   @default("🏁")
+  createdAt    DateTime @default(now())
 
+  dossards           Dossard[]
   pointsTransactions PointsTransaction[]
   purchasesMade      Purchase[]           @relation("BuyingTeam")
   purchasesTargeted  Purchase[]           @relation("TargetTeam")
   raceAdjustments    RaceAdjustment[]
+}
+
+// Un vélo = un dossard. Une équipe peut avoir plusieurs vélos (plusieurs
+// dossards) — d'où une table séparée plutôt qu'un champ unique sur Team.
+model Dossard {
+  id        String   @id @default(cuid())
+  number    Int      @unique
+  teamId    String?
+  createdAt DateTime @default(now())
+
+  team Team? @relation(fields: [teamId], references: [id], onDelete: SetNull)
 }
 
 model Organizer {

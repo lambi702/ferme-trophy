@@ -5,7 +5,7 @@
  * Usage : npm run seed
  */
 import { PrismaClient } from '@prisma/client'
-import { hashPin, slugify } from '../src/lib/auth'
+import { slugify, hashPin } from '../src/lib/auth'
 import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
@@ -17,6 +17,7 @@ const TEAM_NAMES = [
   'Écurie Hiboux', 'Écurie Faucons Dorés', 'Écurie Tigres',
   'Écurie Vipères', 'Écurie Ours Bruns',
 ]
+const SECTIONS = ['Louveteaux', 'Éclaireurs', 'Pionniers', 'Nutons']
 
 const COLORS = ['#e10600', '#ffd60a', '#1e90ff', '#39ff14', '#ff8c00', '#c7c7cc', '#ff3b30', '#00d4ff']
 const EMOJIS = ['🏎️', '🦅', '🐺', '🐆', '🐍', '🦊', '🐈‍⬛', '🦁', '🐗', '🦉', '🐯', '🐻', '⚡', '🔥']
@@ -29,6 +30,9 @@ function randInt(min: number, max: number) {
 function pick<T>(arr: T[]): T {
   return arr[randInt(0, arr.length - 1)]
 }
+function randomPin() {
+  return String(randInt(10000, 99999))
+}
 
 async function main() {
   console.log('🧹 Purge des données existantes...')
@@ -37,6 +41,7 @@ async function main() {
   await prisma.raceLapEvent.deleteMany()
   await prisma.pointsTransaction.deleteMany()
   await prisma.marketplaceItem.deleteMany()
+  await prisma.dossard.deleteMany()
   await prisma.organizer.deleteMany()
   await prisma.team.deleteMany()
   await prisma.adminUser.deleteMany()
@@ -51,28 +56,46 @@ async function main() {
     },
   })
 
-  console.log('🏎️ Équipes...')
+  console.log('🔢 Pool de dossards (1 à 20 pour la démo)...')
+  const dossardIds: Record<number, string> = {}
+  for (let n = 1; n <= 20; n++) {
+    const d = await prisma.dossard.create({ data: { number: n } })
+    dossardIds[n] = d.id
+  }
+
+  console.log('🏎️ Équipes (une équipe = une "section", 1 à 2 dossards chacune)...')
   const teams = []
+  let nextDossard = 1
   for (let i = 0; i < TEAM_NAMES.length; i++) {
     const unitName = TEAM_NAMES[i]
-    const pin = String(randInt(10000, 99999))
+    const pin = randomPin()
+    const bikeCount = i < 2 ? 2 : 1 // les deux premières équipes ont 2 vélos, pour illustrer le multi-dossard
+    const myDossards: number[] = []
+    for (let b = 0; b < bikeCount && nextDossard <= 20; b++) {
+      myDossards.push(nextDossard)
+      nextDossard++
+    }
+
     const team = await prisma.team.create({
       data: {
         unitName,
+        sectionName: pick(SECTIONS),
         slug: slugify(unitName),
-        dossardNumber: i + 1,
-        pinHash: await hashPin(pin),
+        pin,
         foulardName: unitName,
         foulardColor: COLORS[i % COLORS.length],
         foulardEmoji: EMOJIS[i % EMOJIS.length],
       },
     })
-    teams.push({ ...team, pin })
+    for (const num of myDossards) {
+      await prisma.dossard.update({ where: { id: dossardIds[num] }, data: { teamId: team.id } })
+    }
+    teams.push({ ...team, pin, dossards: myDossards })
   }
-  console.log('   PIN de démo (toutes les équipes) : voir prisma/seed.ts ou la sortie ci-dessous')
-  teams.forEach((t) => console.log(`   ${t.unitName.padEnd(24)} /equipe/${t.slug.padEnd(20)} PIN ${t.pin}`))
+  console.log('   PIN de démo (toutes les équipes) :')
+  teams.forEach((t) => console.log(`   ${t.unitName.padEnd(24)} /equipe/${t.slug.padEnd(20)} dossard(s) ${t.dossards.join(',').padEnd(6)} PIN ${t.pin}`))
 
-  console.log('🎮 Organisateurs de mini-jeux...')
+  console.log('🎮 Organisateurs de mini-jeux (créés par le comité, PLUS de self-service)...')
   const organizers = []
   for (const name of ['Julie', 'Marc', 'Sophie']) {
     organizers.push(
@@ -99,15 +122,13 @@ async function main() {
 
   console.log('🏁 Tours déjà courus (course "en cours")...')
   for (const team of teams) {
-    const laps = randInt(5, 25)
-    for (let i = 0; i < laps; i++) {
-      await prisma.raceLapEvent.create({
-        data: {
-          dossardNumber: team.dossardNumber!,
-          timestamp: new Date(now - randInt(0, 3 * 60 * 60 * 1000)),
-          source: 'seed',
-        },
-      })
+    for (const dossardNumber of team.dossards) {
+      const laps = randInt(3, 15)
+      for (let i = 0; i < laps; i++) {
+        await prisma.raceLapEvent.create({
+          data: { dossardNumber, timestamp: new Date(now - randInt(0, 3 * 60 * 60 * 1000)), source: 'seed' },
+        })
+      }
     }
   }
 

@@ -18,17 +18,16 @@ export class MockTimingAdapter implements TimingAdapter {
 
   start(onEvent: (event: NormalizedLapEvent) => void | Promise<void>) {
     this.timer = setInterval(async () => {
-      const teams = await prisma.team.findMany({
-        where: { dossardNumber: { not: null } },
-        select: { dossardNumber: true },
+      const dossards = await prisma.dossard.findMany({
+        where: { teamId: { not: null } },
+        select: { number: true },
       })
-      if (teams.length === 0) return
+      if (dossards.length === 0) return
       // Un sous-ensemble aléatoire de dossards "boucle" à chaque tick, pas tous en même temps.
-      const shuffled = [...teams].sort(() => Math.random() - 0.5)
-      const count = Math.max(1, Math.floor(teams.length * 0.15))
-      for (const t of shuffled.slice(0, count)) {
-        if (t.dossardNumber == null) continue
-        await onEvent({ dossardNumber: t.dossardNumber, timestamp: new Date() })
+      const shuffled = [...dossards].sort(() => Math.random() - 0.5)
+      const count = Math.max(1, Math.floor(dossards.length * 0.15))
+      for (const d of shuffled.slice(0, count)) {
+        await onEvent({ dossardNumber: d.number, timestamp: new Date() })
       }
     }, this.tickMs)
   }

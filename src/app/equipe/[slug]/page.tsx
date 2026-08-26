@@ -2,16 +2,24 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSSE } from '@/lib/useSSE'
+
+type CourseRow = {
+  teamId: string
+  slug: string
+  dossardNumbers: number[]
+  adjustedLaps: number
+  rank: number
+}
 
 type PublicInfo = {
   slug: string
   unitName: string
-  dossardNumber: number | null
+  sectionName: string
+  dossardNumbers: number[]
   foulardName: string
   foulardColor: string
   foulardEmoji: string
-  rank: number | null
-  adjustedLaps: number
 }
 
 type MeInfo = PublicInfo & { id: string; pointsBalance: number }
@@ -39,7 +47,14 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
   const [items, setItems] = useState<MarketItem[]>([])
   const [others, setOthers] = useState<OtherTeam[]>([])
   const [purchaseMsg, setPurchaseMsg] = useState('')
+  const [unitName, setUnitName] = useState('')
+  const [sectionName, setSectionName] = useState('')
   const [foulardName, setFoulardName] = useState('')
+
+  // Score en live : on se branche sur le même flux SSE que le classement
+  // public et on extrait juste la ligne de cette équipe.
+  const course = useSSE<CourseRow[]>('/api/leaderboard/course/stream')
+  const liveRow = course.data?.find((r) => r.slug === slug)
 
   const loadPublic = () => fetch(`/api/teams/${slug}`).then((r) => r.json()).then(setInfo)
   const loadMe = () =>
@@ -48,10 +63,11 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
       const data: MeInfo = await r.json()
       if (data.slug === slug) {
         setMe(data)
+        setUnitName(data.unitName)
+        setSectionName(data.sectionName)
         setFoulardName(data.foulardName)
       }
     })
-  // Catalogue + prix : public, visible sans PIN (seul l'achat est réservé).
   const loadItems = () => fetch('/api/marketplace/items').then((r) => r.json()).then(setItems)
 
   useEffect(() => {
@@ -77,7 +93,7 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
     await loadMe()
   }
 
-  const saveFoulardField = async (field: string, value: string) => {
+  const saveField = async (field: string, value: string) => {
     const res = await fetch(`/api/teams/${slug}/foulard`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -107,26 +123,33 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
 
   if (!info) return <main className="min-h-screen flex items-center justify-center text-white/40">Chargement...</main>
 
+  const displayName = info.foulardName || info.unitName || 'Équipe sans nom'
+  const rank = liveRow?.rank ?? null
+  const adjustedLaps = liveRow?.adjustedLaps ?? 0
+  const dossardNumbers = liveRow?.dossardNumbers ?? info.dossardNumbers
+
   return (
     <main className="min-h-screen px-4 py-8 max-w-lg mx-auto">
       <Link href="/classement" className="font-mono-race text-ft-silver text-sm">← Classement</Link>
 
       <div className="card p-6 mt-4 text-center" style={{ borderColor: info.foulardColor, borderWidth: 2 }}>
         <span className="text-6xl">{info.foulardEmoji}</span>
-        <h1 className="font-mono-race text-2xl font-bold mt-2">{info.foulardName || info.unitName}</h1>
-        <p className="text-white/40 text-sm">{info.unitName}</p>
+        <h1 className="font-mono-race text-2xl font-bold mt-2">{displayName}</h1>
+        {info.unitName && <p className="text-white/40 text-sm">{info.unitName}{info.sectionName && ` — ${info.sectionName}`}</p>}
         <div className="flex items-center justify-center gap-6 mt-4">
           <div>
-            <p className="text-white/40 text-xs">Dossard</p>
-            <p className="font-mono-race text-2xl font-bold" style={{ color: info.foulardColor }}>#{info.dossardNumber ?? '—'}</p>
+            <p className="text-white/40 text-xs">{dossardNumbers.length > 1 ? 'Dossards' : 'Dossard'}</p>
+            <p className="font-mono-race text-2xl font-bold" style={{ color: info.foulardColor }}>
+              {dossardNumbers.length > 0 ? dossardNumbers.map((n) => `#${n}`).join(' ') : '—'}
+            </p>
           </div>
           <div>
             <p className="text-white/40 text-xs">Classement</p>
-            <p className="font-mono-race text-2xl font-bold">{info.rank ? `${info.rank}e` : '—'}</p>
+            <p className="font-mono-race text-2xl font-bold">{rank ? `${rank}e` : '—'}</p>
           </div>
           <div>
-            <p className="text-white/40 text-xs">Tours</p>
-            <p className="font-mono-race text-2xl font-bold text-ft-red">{info.adjustedLaps}</p>
+            <p className="text-white/40 text-xs">Tours {course.live && <span className="text-ft-red">●</span>}</p>
+            <p className="font-mono-race text-2xl font-bold text-ft-red">{adjustedLaps}</p>
           </div>
         </div>
       </div>
@@ -147,12 +170,31 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
       ) : (
         <div className="card p-5 mt-4">
           <p className="font-mono-race font-bold text-sm mb-3">⭐ Solde de points : <span className="text-ft-gold text-xl">{me.pointsBalance}</span></p>
+          <p className="text-white/40 text-xs mb-4">🎨 Personnalise ta page — elle était vierge, à toi de la faire vivre !</p>
 
-          <p className="text-xs font-mono-race text-white/50 mb-1">Nom du foulard</p>
+          <p className="text-xs font-mono-race text-white/50 mb-1">Nom de l'unité</p>
+          <input
+            value={unitName}
+            onChange={(e) => setUnitName(e.target.value)}
+            onBlur={() => saveField('unitName', unitName)}
+            placeholder="ex: 3e Unité Saint-Pierre"
+            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
+          />
+
+          <p className="text-xs font-mono-race text-white/50 mb-1">Nom de la section</p>
+          <input
+            value={sectionName}
+            onChange={(e) => setSectionName(e.target.value)}
+            onBlur={() => saveField('sectionName', sectionName)}
+            placeholder="ex: Louveteaux, Éclaireurs..."
+            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
+          />
+
+          <p className="text-xs font-mono-race text-white/50 mb-1">Nom d'écurie (affiché au classement)</p>
           <input
             value={foulardName}
             onChange={(e) => setFoulardName(e.target.value)}
-            onBlur={() => saveFoulardField('foulardName', foulardName)}
+            onBlur={() => saveField('foulardName', foulardName)}
             placeholder="ex: Écurie Faucons Rouges"
             className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
           />
@@ -161,7 +203,7 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
           <input
             type="color"
             defaultValue={me.foulardColor}
-            onChange={(e) => saveFoulardField('foulardColor', e.target.value)}
+            onChange={(e) => saveField('foulardColor', e.target.value)}
             className="w-16 h-9 rounded mb-3 bg-transparent"
           />
 
@@ -170,7 +212,7 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
             {EMOJIS.map((e) => (
               <button
                 key={e}
-                onClick={() => saveFoulardField('foulardEmoji', e)}
+                onClick={() => saveField('foulardEmoji', e)}
                 className={`text-xl p-1.5 rounded-md ${me.foulardEmoji === e ? 'bg-ft-red' : 'bg-white/5'}`}
               >
                 {e}

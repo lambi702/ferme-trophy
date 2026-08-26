@@ -20,9 +20,9 @@ docker compose exec web npx tsx prisma/seed.ts   # scénario de démo rejouable
 ```
 
 ## Modèle d'accès (3 rôles)
-- **Comité** (`AdminUser`) : email + mot de passe
-- **Organisateur de mini-jeu** (`Organizer`) : nom + PIN, **compte créé par le comité** (`/admin/organisateurs`) — pas de self-service (retiré suite à un risque de triche identifié : n'importe qui pouvait sinon se créer un accès et créditer des points)
-- **Équipe** (`Team`) : PIN à 4-6 chiffres, pas de compte — page publique `/equipe/{slug}`, déverrouillée par PIN pour éditer le foulard et acheter en marketplace
+- **Comité** (`AdminUser`) : email + mot de passe. Vue globale, création des comptes organisateurs, correction manuelle des points/tours.
+- **Organisateur de mini-jeu** (`Organizer`) : nom + PIN, **compte créé par le comité** (`/admin/organisateurs`) — pas de self-service (retiré suite à un risque de triche identifié : n'importe qui pouvait sinon se créer un accès et créditer des points). Peut : créditer des points, éditer les prix marketplace, créer une équipe et l'associer à un/des dossard(s) (`/organisateur/equipes`).
+- **Équipe** (`Team`, = une section scoute) : PIN à 5 chiffres **retrouvable à tout moment par le comité/les organisateurs** (`GET /api/teams`, stocké en clair — voir AGENTS.md pour le pourquoi). Pas de compte. Créée **vierge** par un organisateur ou le comité ; c'est l'équipe qui se personnalise elle-même (nom d'unité, nom de section, foulard) via sa page publique `/equipe/{slug}`, déverrouillée par PIN pour éditer et acheter en marketplace. **Une équipe peut avoir plusieurs dossards** (plusieurs vélos) — les tours de tous ses dossards sont additionnés au classement.
 
 ## Adaptateur de chronométrage
 Interface `TimingAdapter` (`src/lib/timing/adapter.ts`) — le reste du système ne consomme que des `RaceLapEvent` normalisés. `MockTimingAdapter` tourne en tâche de fond (process séparé dans le même conteneur, `scripts/timing-daemon.ts`) et simule des passages tant que les specs O'Top ne sont pas connues. **Brancher O'Top = implémenter la même interface, rien d'autre ne change.**

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSSE } from '@/lib/useSSE'
 
@@ -8,7 +8,8 @@ type CourseRow = {
   teamId: string
   slug: string
   unitName: string
-  dossardNumber: number
+  sectionName: string
+  dossardNumbers: number[]
   foulardName: string
   foulardColor: string
   foulardEmoji: string
@@ -29,21 +30,42 @@ type PointsRow = {
   rank: number
 }
 
+type MarketItem = {
+  id: string
+  name: string
+  description: string
+  costPoints: number
+  type: 'BONUS_SELF' | 'MALUS_OTHER'
+  lapEffect: number
+  active: boolean
+}
+
 const medal = (rank: number) => (rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`)
 
 export default function ClassementPage() {
-  const [tab, setTab] = useState<'course' | 'points'>('course')
+  const [tab, setTab] = useState<'course' | 'points' | 'market'>('course')
   const course = useSSE<CourseRow[]>('/api/leaderboard/course/stream')
   const points = useSSE<PointsRow[]>('/api/leaderboard/points/stream')
-  const live = tab === 'course' ? course.live : points.live
+  const [items, setItems] = useState<MarketItem[]>([])
+  const live = tab === 'course' ? course.live : tab === 'points' ? points.live : true
+
+  useEffect(() => {
+    if (tab !== 'market') return
+    const load = () => fetch('/api/marketplace/items').then((r) => r.json()).then(setItems)
+    load()
+    const interval = setInterval(load, 8000)
+    return () => clearInterval(interval)
+  }, [tab])
 
   return (
     <main className="min-h-screen px-4 py-8 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <Link href="/" className="font-mono-race text-ft-silver text-sm">← Ferme Trophy</Link>
-        <span className={`text-xs font-mono-race font-bold px-2 py-1 rounded ${live ? 'bg-ft-red text-white' : 'bg-white/10 text-white/50'}`}>
-          {live ? '● LIVE' : '○ actualisation périodique'}
-        </span>
+        {tab !== 'market' && (
+          <span className={`text-xs font-mono-race font-bold px-2 py-1 rounded ${live ? 'bg-ft-red text-white' : 'bg-white/10 text-white/50'}`}>
+            {live ? '● LIVE' : '○ actualisation périodique'}
+          </span>
+        )}
       </div>
 
       <h1 className="font-mono-race text-3xl font-bold mb-6">🏁 CLASSEMENT</h1>
@@ -61,6 +83,12 @@ export default function ClassementPage() {
         >
           ⭐ Points
         </button>
+        <button
+          onClick={() => setTab('market')}
+          className={`flex-1 py-2.5 rounded-lg font-mono-race font-bold text-sm ${tab === 'market' ? 'bg-white text-ft-bg' : 'card text-white/60'}`}
+        >
+          🏪 Marketplace
+        </button>
       </div>
 
       {tab === 'course' && (
@@ -76,7 +104,8 @@ export default function ClassementPage() {
               <div className="flex-1 min-w-0">
                 <p className="font-mono-race font-bold truncate">{row.foulardName || row.unitName}</p>
                 <p className="text-white/40 text-xs truncate">
-                  #{row.dossardNumber} · {row.unitName}
+                  {row.dossardNumbers.map((n) => `#${n}`).join(' ')} · {row.unitName}
+                  {row.sectionName && ` (${row.sectionName})`}
                   {row.adjustment !== 0 && (
                     <span className={row.adjustment > 0 ? 'text-ft-gold' : 'text-ft-red2'}>
                       {' '}({row.adjustment > 0 ? '+' : ''}{row.adjustment} bonus/malus)
@@ -111,6 +140,23 @@ export default function ClassementPage() {
           ))}
           {points.data?.length === 0 && <p className="text-white/40 text-center py-10">Aucune équipe pour l'instant.</p>}
           {!points.data && <p className="text-white/40 text-center py-10">Chargement...</p>}
+        </div>
+      )}
+
+      {tab === 'market' && (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.id} className="card flex items-center gap-3 p-4">
+              <span className="text-2xl">{item.type === 'BONUS_SELF' ? '🟢' : '🔴'}</span>
+              <div className="flex-1 min-w-0">
+                <p className="font-mono-race font-bold">{item.name}</p>
+                {item.description && <p className="text-white/40 text-xs">{item.description}</p>}
+                <p className="text-white/40 text-xs">{item.lapEffect > 0 ? '+' : ''}{item.lapEffect} tour · {item.type === 'BONUS_SELF' ? 'pour soi' : 'sur une équipe cible'}</p>
+              </div>
+              <span className="font-mono-race text-2xl font-bold text-ft-gold">{item.costPoints}<span className="text-sm"> pts</span></span>
+            </div>
+          ))}
+          {items.length === 0 && <p className="text-white/40 text-center py-10">Aucun item disponible.</p>}
         </div>
       )}
     </main>
