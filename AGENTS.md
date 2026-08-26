@@ -18,6 +18,14 @@ Le montage du volume est nécessaire pour que les fichiers de migration génér�
 - **`TimingAdapter`** (`src/lib/timing/adapter.ts`) : interface unique pour brancher un prestataire de chronométrage. `MockTimingAdapter` tourne dans un process séparé (`scripts/timing-daemon.ts`, lancé en arrière-plan par `docker-entrypoint.sh` avec `tsx`, dans le **même conteneur** que Next.js). **Brancher O'Top = remplacer l'import dans `timing-daemon.ts`, rien d'autre ne doit changer.**
 - **Achats marketplace appliqués immédiatement** (pas de validation commissaire) — point ouvert du handover original, à trancher avant le jour J si besoin (voir README).
 
+## ⚠️ Revirement volontaire vs le handover d'origine : comptes organisateur
+Le handover initial (section 5) demandait un **self-service** pour les comptes organisateur (nom + PIN, création automatique au premier login). **Ça a été retiré suite à un retour direct du comité** : n'importe qui pouvait ainsi se créer un accès et créditer des points à sa propre équipe (triche). Désormais :
+- `/api/organizer/login` (`src/app/api/organizer/login/route.ts`) **vérifie uniquement** — aucune création automatique.
+- `/api/organizers` POST (admin only, `src/app/api/organizers/route.ts`) crée les comptes, PIN généré affiché une seule fois — même pattern que la création d'équipes.
+- Ne JAMAIS réintroduire l'auto-création sur `/api/organizer/login`, même si ça semble "pratique" — c'est précisément le trou de sécurité corrigé.
+- Les organisateurs gardent le droit d'éditer le catalogue marketplace (prix, activer/désactiver) — voir `/api/marketplace/items` — mais pas de créer d'autres comptes organisateur (admin only).
+- Le catalogue marketplace (items + prix) est **public**, sans PIN — seul l'achat proprement dit exige le PIN de l'équipe (`/api/marketplace/purchase`).
+
 ## Déployer un changement (sans migration de schéma)
 ```bash
 docker compose build web && docker compose up -d web

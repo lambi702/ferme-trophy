@@ -21,7 +21,7 @@ docker compose exec web npx tsx prisma/seed.ts   # scénario de démo rejouable
 
 ## Modèle d'accès (3 rôles)
 - **Comité** (`AdminUser`) : email + mot de passe
-- **Organisateur de mini-jeu** (`Organizer`) : self-service, nom + PIN (créé automatiquement à la première connexion)
+- **Organisateur de mini-jeu** (`Organizer`) : nom + PIN, **compte créé par le comité** (`/admin/organisateurs`) — pas de self-service (retiré suite à un risque de triche identifié : n'importe qui pouvait sinon se créer un accès et créditer des points)
 - **Équipe** (`Team`) : PIN à 4-6 chiffres, pas de compte — page publique `/equipe/{slug}`, déverrouillée par PIN pour éditer le foulard et acheter en marketplace
 
 ## Adaptateur de chronométrage
