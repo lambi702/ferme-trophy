@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import AdminGate from '@/components/AdminGate'
 import AdminNav from '@/components/AdminNav'
 
@@ -67,7 +68,12 @@ export default function EquipesPage() {
       {() => (
         <main className="min-h-screen px-4 py-8 max-w-3xl mx-auto">
           <AdminNav />
-          <h1 className="font-mono-race text-2xl font-bold mb-6">🏎️ Équipes</h1>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="font-mono-race text-2xl font-bold">🏎️ Équipes</h1>
+            <Link href="/admin/equipes/qrcodes" className="bg-ft-gold text-ft-bg font-mono-race font-bold text-sm px-4 py-2 rounded-lg">
+              📱 QR codes
+            </Link>
+          </div>
 
           <div className="card p-5 mb-6">
             <p className="font-mono-race font-bold text-sm mb-2">Import (one-shot)</p>
