@@ -1,18 +1,26 @@
 /**
- * Parseur TOLÉRANT des données de chronométrage — on ne connaît pas encore
- * le format exact qu'O'Top configurera dans RaceResult, donc on accepte à
- * peu près tout ce qu'un Exporter / la Simple API RaceResult peut produire :
+ * Parseur TOLÉRANT des données de chronométrage. O'Top chronomètre avec
+ * RACE RESULT sur son propre serveur ; on ne sait pas encore quel format
+ * ils configureront, donc on reconnaît tout ce que RaceResult sait produire
+ * (doc officielle consultée le 2026-10-01) :
  *
- *  - JSON : objet seul, tableau d'objets, tableau de tableaux (avec ou sans
- *    ligne d'en-tête), ou enveloppe { data: [...] } / { list: [...] } ...
- *  - CSV / TSV / point-virgule / pipe, avec ou sans en-tête
- *  - formulaire (application/x-www-form-urlencoded) ou query string (GET)
- *  - texte brut, une ligne par passage ("12" ou "12;14:03:22.418")
+ *  - Exporters "Raw Data Record JSON" : {"ID":1,"Bib":50001,"TimingPoint":
+ *    "STARTFINISH","Time":32795.944,"Invalid":false,"Passing":{...,
+ *    "UTCTime":"2024-01-12T09:06:35.944Z"}} (objets imbriqués aplatis)
+ *  - Exporters "Raw Data Record V1/V2" : "7750;ZCMBG52;;10:50:00.477;0;72;..."
+ *    (n° de passage ; dossard/transpondeur ; date ; heure ; ...)
+ *  - Exporter "RunScore RSBCI" : "RSBCI,12,10:50:00.477,START+FINISH"
+ *  - Expressions perso, ex. [Event.ID];[RD_TimingPoint];[Bib];[RD_Time]
+ *    (le dossard = colonne entière la plus proche AVANT la colonne heure)
+ *  - Simple API / data/list en JSON (tableaux de tableaux), CSV, TXT, XML
+ *    non géré ; webhooks RaceResult (JSON en POST)
+ *  - formulaire / query string (GET), texte brut une ligne par passage
  *
  * Chaque enregistrement devient soit un PASSAGE (bib [+ heure/id]), soit un
  * COMPTEUR (bib + nombre de tours absolu) si une colonne "tours" existe.
- * Les noms de colonnes sont auto-détectés (alias FR/EN/NL/DE), ou forcés
- * via la config (bibField, lapsField...) depuis /admin/chrono.
+ * Noms de colonnes auto-détectés (alias FR/EN/NL/DE + champs RD_*), ou forcés
+ * depuis /admin/chrono — par nom, ou par NUMÉRO de colonne (1, 2, 3...) pour
+ * les données sans en-tête.
  */
 
 export type ParsedRecord = {
@@ -20,6 +28,7 @@ export type ParsedRecord = {
   laps?: number
   time?: string
   externalId?: string
+  timingPoint?: string
 }
 
 export type FieldMapping = {
@@ -27,16 +36,23 @@ export type FieldMapping = {
   lapsField?: string
   timeField?: string
   idField?: string
+  /** Si renseigné, ignore les enregistrements d'un autre point de chrono (ex : "STARTFINISH"). */
+  timingPoint?: string
 }
 
 const norm = (k: string) => k.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '')
 
+// Ordre = priorité. "utctime" (absolu) passe avant "time" (secondes depuis minuit chez RaceResult).
 const ALIASES = {
-  bib: ['bib', 'bibnumber', 'bibno', 'bibnr', 'startnumber', 'startnr', 'startno', 'startnummer', 'dossard', 'dossardnumber', 'numero', 'number', 'nr', 'no', 'num', 'dorsal', 'rugnummer', 'participant', 'bibid'],
+  bib: ['bib', 'rdidbib', 'idbib', 'rdbib', 'bibnumber', 'bibno', 'bibnr', 'startnumber', 'startnr', 'startno', 'startnummer', 'dossard', 'dossardnumber', 'numero', 'number', 'nr', 'no', 'num', 'dorsal', 'rugnummer'],
   laps: ['laps', 'lap', 'lapcount', 'numberoflaps', 'nboflaps', 'nblaps', 'nbtours', 'tours', 'tour', 'nombredetours', 'rounds', 'roundcount', 'rondes', 'ronden', 'runden', 'lapsdone', 'completedlaps', 'totallaps', 'count'],
-  time: ['time', 'timestamp', 'passingtime', 'passing', 'timeofday', 'tod', 'rtc', 'chiptime', 'datetime', 'date', 'heure', 'readtime', 'hittime', 'detectiontime', 'utctime', 'zeit', 'tijd'],
-  id: ['id', 'passingid', 'pid', 'recordid', 'rawdataid', 'uid', 'eventid', 'readid', 'detectionid'],
+  time: ['utctime', 'rdtime', 'time', 'passingtime', 'timeofday', 'tod', 'rtc', 'chiptime', 'datetime', 'heure', 'readtime', 'hittime', 'detectiontime', 'zeit', 'tijd', 'timestamp'],
+  // PAS "eventid"/"webhookid" : constants pour tout un événement, ils feraient tout passer pour des doublons.
+  id: ['id', 'rdid', 'passingid', 'rawdataid', 'pid', 'recordid', 'readid', 'detectionid', 'uid'],
+  timingPoint: ['timingpoint', 'rdtimingpoint', 'tp', 'location', 'splitname'],
+  invalid: ['invalid', 'isinvalid'],
 }
+const HEADER_WORDS = new Set([...ALIASES.bib, ...ALIASES.laps, ...ALIASES.time, ...ALIASES.id, ...ALIASES.timingPoint])
 
 type Row = Record<string, unknown>
 
@@ -46,7 +62,7 @@ export function parseTimingPayload(body: string, contentType = '', mapping: Fiel
 
   if (text.startsWith('{') || text.startsWith('[')) {
     try {
-      return rowsToRecords(jsonToRows(JSON.parse(text)), mapping)
+      return finalize(rowsToRecords(jsonToRows(JSON.parse(text), mapping), mapping), mapping)
     } catch {
       /* pas du JSON valide → on tente le texte */
     }
@@ -56,10 +72,10 @@ export function parseTimingPayload(body: string, contentType = '', mapping: Fiel
     return parseParams(new URLSearchParams(text), mapping)
   }
 
-  return rowsToRecords(textToRows(text), mapping)
+  return finalize(rowsToRecords(textToRows(text, mapping), mapping), mapping)
 }
 
-/** Pour un GET (Exporter RaceResult en "HTTP Get") : ?bib=12&time=... ou ?data=<lignes>. */
+/** GET (Exporter RaceResult en "HTTP Get") : ?bib=12&time=... ou ?data=<lignes>. */
 export function parseParams(params: URLSearchParams, mapping: FieldMapping = {}): ParsedRecord[] {
   const obj: Row = {}
   params.forEach((value, key) => {
@@ -68,32 +84,53 @@ export function parseParams(params: URLSearchParams, mapping: FieldMapping = {})
   const nested = obj.data ?? obj.payload ?? obj.body
   if (typeof nested === 'string' && nested.trim()) return parseTimingPayload(nested, '', mapping)
   if (Object.keys(obj).length === 0) return []
-  return rowsToRecords([obj], mapping)
+  return finalize(rowsToRecords([obj], mapping), mapping)
 }
 
-function jsonToRows(value: unknown): Row[] {
+// --- JSON --------------------------------------------------------------------
+
+function jsonToRows(value: unknown, mapping: FieldMapping): Row[] {
   if (Array.isArray(value)) {
     if (value.length === 0) return []
-    if (value.every((v) => Array.isArray(v))) return tableToRows(value as unknown[][])
-    if (value.every((v) => v !== null && typeof v === 'object')) return value.flatMap((v) => jsonToRows(v))
+    if (value.every((v) => Array.isArray(v))) return tableToRows((value as unknown[][]).map((r) => r.map(cell)), mapping)
+    if (value.every((v) => v !== null && typeof v === 'object')) return value.flatMap((v) => jsonToRows(v, mapping))
     // Tableau de valeurs simples → une ligne par valeur (bib seul, ou "bib;heure").
-    return tableToRows(value.map((v) => splitLine(String(v))))
+    return tableToRows(value.map((v) => splitLine(String(v))), mapping)
   }
   if (value && typeof value === 'object') {
     const obj = value as Row
-    for (const key of ['data', 'list', 'rows', 'results', 'passings', 'records', 'participants', 'items', 'Data', 'List', 'Passings']) {
-      if (Array.isArray(obj[key])) return jsonToRows(obj[key])
+    for (const key of ['data', 'list', 'rows', 'results', 'passings', 'records', 'participants', 'items', 'Data', 'List', 'Passings', 'Records']) {
+      if (Array.isArray(obj[key])) return jsonToRows(obj[key], mapping)
     }
-    const arrays = Object.values(obj).filter(Array.isArray)
-    if (arrays.length === 1 && findKey(obj, ALIASES.bib) === undefined) return jsonToRows(arrays[0])
-    return [obj]
+    const flat = flatten(obj)
+    if (findKey(flat, ALIASES.bib, mapping.bibField) !== undefined) return [flat]
+    // Enveloppe { "groupe A": [[...]], "groupe B": [[...]] } (listes groupées) → on concatène.
+    const arrays = Object.values(obj).filter(Array.isArray) as unknown[][]
+    if (arrays.length > 0) return arrays.flatMap((a) => jsonToRows(a, mapping))
+    const objects = Object.values(obj).filter((v) => v && typeof v === 'object')
+    if (objects.length > 0) return objects.flatMap((o) => jsonToRows(o, mapping))
+    return []
   }
   return []
 }
 
-function textToRows(text: string): Row[] {
+/** {"Bib":1,"Passing":{"UTCTime":...}} → {"Bib":1,"Passing.UTCTime":...} (les clés de surface restent prioritaires). */
+function flatten(obj: Row, prefix = '', out: Row = {}): Row {
+  for (const [k, v] of Object.entries(obj)) {
+    const key = prefix ? `${prefix}.${k}` : k
+    if (v && typeof v === 'object' && !Array.isArray(v)) flatten(v as Row, key, out)
+    else out[key] = v
+  }
+  return out
+}
+
+const cell = (v: unknown) => (v === null || v === undefined ? '' : String(v).trim())
+
+// --- Texte / tableaux --------------------------------------------------------
+
+function textToRows(text: string, mapping: FieldMapping): Row[] {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-  return tableToRows(lines.map(splitLine))
+  return tableToRows(lines.map(splitLine), mapping)
 }
 
 function splitLine(line: string): string[] {
@@ -103,36 +140,76 @@ function splitLine(line: string): string[] {
   return line.split(delim).map((c) => c.trim().replace(/^"(.*)"$/, '$1'))
 }
 
-/** Tableau brut → objets. Si la 1re ligne ressemble à un en-tête, on s'en sert. */
-function tableToRows(table: unknown[][]): Row[] {
+const TIME_LIKE = /^(\d{4}-\d{2}-\d{2}[T ])?\d{1,2}:\d{2}:\d{2}([.,]\d+)?(Z|[+-]\d{2}:?\d{2})?$/
+const DECIMAL = /^\d+[.,]\d+$/
+const PURE_INT = /^#?\d+$/
+const isTimeLike = (s: string) => TIME_LIKE.test(s) || DECIMAL.test(s)
+const colIndex = (s: string | undefined) => (s && /^\d+$/.test(s.trim()) ? Number(s.trim()) - 1 : null)
+
+/** Tableau brut → objets. En-tête utilisée si reconnue, sinon heuristiques RaceResult. */
+function tableToRows(table: string[][], mapping: FieldMapping): Row[] {
   if (table.length === 0) return []
-  const first = table[0].map((c) => String(c ?? ''))
-  const allAliases = [...ALIASES.bib, ...ALIASES.laps, ...ALIASES.time, ...ALIASES.id]
-  const looksLikeHeader = first.some((c) => /[a-z]/i.test(c) && allAliases.includes(norm(c)))
+  const first = table[0]
+  const looksLikeHeader = first.some((c) => /[a-z]/i.test(c) && (HEADER_WORDS.has(norm(c)) || (mapping.bibField && norm(c) === norm(mapping.bibField))))
   if (looksLikeHeader) {
     return table.slice(1).map((cells) => Object.fromEntries(first.map((h, i) => [h, cells[i]])))
   }
-  // Pas d'en-tête : colonne 0 = dossard, colonne 1 = tours (petit entier) ou heure.
-  return table.map((cells) => {
-    const row: Row = { bib: cells[0] }
-    const second = cells[1] !== undefined ? String(cells[1]).trim() : ''
-    if (second) {
-      if (/^\d{1,4}$/.test(second)) row.laps = second
-      else row.time = second
-    }
-    return row
-  })
+
+  // Colonnes imposées par numéro dans l'admin (données sans en-tête).
+  const forcedBib = colIndex(mapping.bibField)
+  if (forcedBib !== null) {
+    const idx = { laps: colIndex(mapping.lapsField), time: colIndex(mapping.timeField), id: colIndex(mapping.idField) }
+    return table.map((c) => ({
+      bib: c[forcedBib],
+      ...(idx.laps !== null ? { laps: c[idx.laps] } : {}),
+      ...(idx.time !== null ? { time: c[idx.time] } : {}),
+      ...(idx.id !== null ? { id: c[idx.id] } : {}),
+    }))
+  }
+
+  return table.map(guessRow)
 }
+
+function guessRow(c: string[]): Row {
+  // RunScore RSBCI : RSBCI,<dossard>,<hh:mm:ss.kkk>,<point de chrono>
+  if (c[0]?.toUpperCase() === 'RSBCI') return { bib: c[1], time: c[2], timingpoint: c[3] }
+
+  // Raw Data Record V1/V2 : <PassingNo>;<Bib/TranspCode>;<Date>;<Time>;... (≥ 15 colonnes)
+  if (c.length >= 15 && /^\d+$/.test(c[0]) && TIME_LIKE.test(c[3] ?? '')) {
+    const time = c[2] ? `${c[2]} ${c[3]}` : c[3]
+    return { bib: c[1], time: c[3], id: `${c[0]}@${time}` }
+  }
+
+  if (c.length === 1) return { bib: c[0] }
+
+  // Expression perso : la colonne heure la plus à gauche (hors 1re), dossard = entier juste avant.
+  const t = c.findIndex((v, i) => i > 0 && isTimeLike(v))
+  if (t > 0) {
+    for (let i = t - 1; i >= 0; i--) {
+      if (PURE_INT.test(c[i])) return { bib: c[i], time: c[t] }
+    }
+  }
+  // Sinon : dossard en 1re colonne, tours = dernière petite colonne entière (ex : [12,"Nom",5]).
+  const row: Row = { bib: c[0] }
+  for (let i = c.length - 1; i > 0; i--) {
+    if (/^\d{1,4}$/.test(c[i])) { row.laps = c[i]; break }
+  }
+  return row
+}
+
+// --- Objets → enregistrements -------------------------------------------------
 
 function findKey(obj: Row, aliases: string[], forced?: string): string | undefined {
   const keys = Object.keys(obj)
-  if (forced) {
+  const last = (k: string) => norm(k.split('.').pop() ?? k)
+  const depth = (k: string) => k.split('.').length
+  if (forced && !/^\d+$/.test(forced.trim())) {
     const f = norm(forced)
-    const hit = keys.find((k) => norm(k) === f)
+    const hit = keys.filter((k) => norm(k) === f || last(k) === f).sort((a, b) => depth(a) - depth(b))[0]
     if (hit) return hit
   }
   for (const alias of aliases) {
-    const hit = keys.find((k) => norm(k) === alias)
+    const hit = keys.filter((k) => last(k) === alias).sort((a, b) => depth(a) - depth(b))[0]
     if (hit) return hit
   }
   return undefined
@@ -143,8 +220,11 @@ function rowsToRecords(rows: Row[], mapping: FieldMapping): ParsedRecord[] {
   for (const row of rows) {
     const bibKey = findKey(row, ALIASES.bib, mapping.bibField)
     if (!bibKey) continue
-    const bib = toInt(row[bibKey])
-    if (bib === null || bib <= 0) continue
+    const bib = toBib(row[bibKey])
+    if (bib === null) continue
+
+    const invalidKey = findKey(row, ALIASES.invalid)
+    if (invalidKey && (row[invalidKey] === true || String(row[invalidKey]).toLowerCase() === 'true' || row[invalidKey] === 1)) continue
 
     const rec: ParsedRecord = { bib }
     const lapsKey = findKey(row, ALIASES.laps, mapping.lapsField)
@@ -153,36 +233,57 @@ function rowsToRecords(rows: Row[], mapping: FieldMapping): ParsedRecord[] {
       if (laps !== null && laps >= 0) rec.laps = laps
     }
     const timeKey = findKey(row, ALIASES.time, mapping.timeField)
-    if (timeKey && row[timeKey] !== undefined && row[timeKey] !== null && String(row[timeKey]).trim() !== '') {
-      rec.time = String(row[timeKey]).trim()
-    }
+    if (timeKey && cell(row[timeKey]) !== '') rec.time = cell(row[timeKey])
     const idKey = findKey(row, ALIASES.id, mapping.idField)
-    if (idKey && row[idKey] !== undefined && row[idKey] !== null && String(row[idKey]).trim() !== '') {
-      rec.externalId = String(row[idKey]).trim()
-    }
+    if (idKey && cell(row[idKey]) !== '') rec.externalId = cell(row[idKey])
+    const tpKey = findKey(row, ALIASES.timingPoint)
+    if (tpKey && cell(row[tpKey]) !== '') rec.timingPoint = cell(row[tpKey])
     out.push(rec)
   }
   return out
 }
 
+function finalize(records: ParsedRecord[], mapping: FieldMapping): ParsedRecord[] {
+  const tp = mapping.timingPoint?.trim()
+  if (!tp) return records
+  return records.filter((r) => !r.timingPoint || norm(r.timingPoint) === norm(tp))
+}
+
+/** Dossard = entier PUR (éventuellement "#12"). "ZCMBG52" est un transpondeur, pas le dossard 52. */
+function toBib(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isInteger(v) && v > 0) return v
+  if (typeof v !== 'string') return null
+  const m = v.trim().match(/^#?\s*(\d{1,6})$/)
+  const n = m ? parseInt(m[1], 10) : NaN
+  return n > 0 ? n : null
+}
+
 function toInt(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v)
   if (typeof v !== 'string') return null
-  const m = v.match(/-?\d+/)
+  const m = v.trim().match(/^-?\d+/)
   return m ? parseInt(m[0], 10) : null
 }
 
 /**
- * Heure de passage → Date. Accepte ISO complet, "HH:MM:SS(.mmm)" (heure du
- * jour, Europe/Brussels), secondes depuis minuit (format brut RaceResult),
+ * Heure de passage → Date. Accepte ISO complet, "[YYYY-MM-DD ]HH:MM:SS(.mmm)"
+ * (heure locale Europe/Brussels), secondes depuis minuit (format RaceResult),
  * epoch s/ms. Retourne null si illisible (→ l'appelant prend "maintenant").
  */
 export function parsePassingTime(raw: string | undefined, now = new Date()): Date | null {
   if (!raw) return null
   const s = raw.trim()
   if (/^\d{4}-\d{2}-\d{2}[T ]\d/.test(s)) {
-    const d = new Date(s.includes('Z') || /[+-]\d{2}:?\d{2}$/.test(s) ? s : s.replace(' ', 'T'))
-    return Number.isNaN(d.getTime()) ? null : d
+    if (s.includes('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) {
+      const d = new Date(s)
+      return Number.isNaN(d.getTime()) ? null : d
+    }
+    // Date + heure locales sans fuseau → Europe/Brussels.
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2}):(\d{2})(?:[.,](\d{1,3}))?/)
+    if (!m) return null
+    const [, y, mo, d, h, mi, sec, ms] = m
+    const guess = Date.UTC(+y, +mo - 1, +d, +h, +mi, +sec, Number((ms ?? '0').padEnd(3, '0')))
+    return new Date(guess - tzOffsetMs(new Date(guess)))
   }
   const hms = s.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:[.,](\d{1,3}))?$/)
   if (hms) {

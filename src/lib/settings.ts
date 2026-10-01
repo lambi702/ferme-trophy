@@ -28,6 +28,8 @@ export type TimingConfig = {
   lapsField: string
   timeField: string
   idField: string
+  /** Point de chrono RaceResult à garder (ex : "STARTFINISH") — vide = tous. */
+  timingPoint: string
   mockIntervalMs: number
 }
 
@@ -60,6 +62,7 @@ const DEFAULT_TIMING: Omit<TimingConfig, 'pushToken'> = {
   lapsField: '',
   timeField: '',
   idField: '',
+  timingPoint: '',
   mockIntervalMs: 3000,
 }
 
@@ -100,12 +103,13 @@ export async function updateTimingConfig(patch: Partial<TimingConfig>): Promise<
   if (patch.mode && ['off', 'mock', 'poll'].includes(patch.mode)) next.mode = patch.mode
   if (patch.dataMode && ['auto', 'passings', 'counts'].includes(patch.dataMode)) next.dataMode = patch.dataMode
   if (typeof patch.pollUrl === 'string') next.pollUrl = patch.pollUrl.trim().slice(0, 1000)
-  if (patch.pollIntervalSec !== undefined) next.pollIntervalSec = clamp(Number(patch.pollIntervalSec), 2, 600, 10)
+  // Simple API RaceResult : réponses en cache 10-30 s, 406 au-delà d'1 appel/s → pas en dessous de 5 s.
+  if (patch.pollIntervalSec !== undefined) next.pollIntervalSec = clamp(Number(patch.pollIntervalSec), 5, 600, 10)
   if (patch.minLapSeconds !== undefined) next.minLapSeconds = clamp(Number(patch.minLapSeconds), 0, 3600, 20)
   if (patch.mockIntervalMs !== undefined) next.mockIntervalMs = clamp(Number(patch.mockIntervalMs), 500, 60000, 3000)
   if (typeof patch.pushEnabled === 'boolean') next.pushEnabled = patch.pushEnabled
   if (typeof patch.pushToken === 'string' && patch.pushToken.length >= 16) next.pushToken = patch.pushToken
-  for (const f of ['bibField', 'lapsField', 'timeField', 'idField'] as const) {
+  for (const f of ['bibField', 'lapsField', 'timeField', 'idField', 'timingPoint'] as const) {
     if (typeof patch[f] === 'string') next[f] = (patch[f] as string).trim().slice(0, 80)
   }
   await writeSetting('timing', next)

@@ -18,6 +18,7 @@ type Config = {
   lapsField: string
   timeField: string
   idField: string
+  timingPoint: string
   mockIntervalMs: number
 }
 
@@ -171,11 +172,14 @@ function PushCard({ config, status, now, save }: { config: Config; status: Timin
         <button onClick={copy} className="btn-ghost px-3 py-2 text-sm">{copied ? '✓' : 'Copier'}</button>
       </div>
       <div className="rounded-lg bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-white/60">
-        <p className="text-white/40"># Exemples acceptés</p>
-        <p>GET  …/push/&lt;jeton&gt;?bib=12&amp;time=14:03:22.418</p>
-        <p>POST {'{"Bib":12,"Time":"14:03:22.418","ID":981}'}</p>
+        <p className="text-white/40"># Formats RaceResult reconnus d&apos;office (Export Data)</p>
+        <p>Raw Data Record JSON · Raw Data Record V1/V2 · RunScore RSBCI</p>
+        <p>[Event.ID] &amp; &quot;;&quot; &amp; [RD_TimingPoint] &amp; &quot;;&quot; &amp; [Bib] &amp; &quot;;&quot; &amp; [RD_Time]</p>
+        <p className="mt-1 text-white/40"># Ou à la main</p>
+        <p>GET  …/push/&lt;jeton&gt;?bib=[Bib]&amp;time=[RD_Time]</p>
         <p>POST Bib;Laps⏎12;7⏎13;6   <span className="text-white/35">(compteurs absolus)</span></p>
       </div>
+      <p className="text-xs text-white/40">Le dossard doit être un numéro : un code transpondeur (ex. ZCMBG52) sans dossard associé dans RaceResult est ignoré.</p>
       {status.lastPushAt && (
         <p className={`text-sm ${status.lastPushError ? 'text-ft-red2' : 'text-white/55'}`}>
           Dernier push {relTime(status.lastPushAt, now)} : {status.lastPushError || status.lastPushSummary}
@@ -207,7 +211,7 @@ function PollCard({ config, save, toast }: { config: Config; save: (p: Partial<C
       <h2 className="font-mono-race text-xl">B · Interroger une URL (poll)</h2>
       <p className="text-sm text-white/55">
         Si O&apos;Top préfère nous donner un lien (<b>Simple API</b> RaceResult du type <code className="text-xs">api.raceresult.com/&lt;event&gt;/&lt;clé&gt;</code>, ou une liste publiée)
-        avec au minimum le <b>dossard</b> et le <b>nombre de tours</b>.
+        avec au minimum le <b>dossard</b> et le <b>nombre de tours</b>. RaceResult met ces réponses en cache 10 à 30 s et refuse plus d&apos;1 appel/s : 10 s est un bon rythme.
       </p>
       <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://api.raceresult.com/123456/ABCDEF…" className="input font-mono text-sm" />
       <div className="flex flex-wrap items-center gap-2">
@@ -238,6 +242,7 @@ function AdvancedCard({ config, save }: { config: Config; save: (p: Partial<Conf
   const [form, setForm] = useState({
     dataMode: config.dataMode, minLapSeconds: String(config.minLapSeconds),
     bibField: config.bibField, lapsField: config.lapsField, timeField: config.timeField, idField: config.idField,
+    timingPoint: config.timingPoint,
   })
   return (
     <details className="card p-4">
@@ -264,7 +269,12 @@ function AdvancedCard({ config, save }: { config: Config; save: (p: Partial<Conf
           <p className="mt-1 text-xs text-white/40">Un tapis peut lire 2× le même vélo. Mets un peu moins que le tour le plus rapide possible.</p>
         </div>
         <div>
-          <label className="label">Noms de colonnes forcés (vide = détection auto)</label>
+          <label className="label">Point de chrono à garder (vide = tous)</label>
+          <input value={form.timingPoint} onChange={(e) => setForm({ ...form, timingPoint: e.target.value })} placeholder="ex : STARTFINISH" className="input w-56" />
+          <p className="mt-1 text-xs text-white/40">Si O&apos;Top envoie plusieurs tapis (départ, intermédiaire…), on ne compte que celui-ci.</p>
+        </div>
+        <div>
+          <label className="label">Colonnes forcées — nom, ou numéro (1, 2, 3…) si pas d&apos;en-tête. Vide = détection auto</label>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {(['bibField', 'lapsField', 'timeField', 'idField'] as const).map((f) => (
               <input key={f} value={form[f]} onChange={(e) => setForm({ ...form, [f]: e.target.value })}

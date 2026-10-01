@@ -7,7 +7,7 @@ import { ingestRecords, summarize } from './ingest'
 /**
  * Interroge périodiquement une URL RaceResult et ingère ce qu'elle renvoie.
  * Cas d'usage typiques (à confirmer avec O'Top) :
- *  - "Simple API" RaceResult : https://api.raceresult.com/<eventID>/<clé> —
+ *  - "Simple API" RaceResult : https://api.raceresult.com/<eventID>/<clé> (cache 10-30 s côté RR) —
  *    une liste avec au minimum [Bib] + nombre de tours (→ mode compteur), ou
  *    les données brutes de passage (→ mode passages).
  *  - n'importe quel export CSV/JSON accessible en HTTP.
@@ -41,7 +41,7 @@ export class RaceResultPollAdapter implements TimingAdapter {
         await patchTimingStatus({ lastPollAt: at, lastPollOk: false, lastPollError: `Réponse sans dossard exploitable (${text.length} octets) : ${text.slice(0, 160)}` })
         return
       }
-      const result = await ingestRecords(records, this.name, this.cfg)
+      const result = await ingestRecords(records, this.name, this.cfg, { snapshot: true })
       await patchTimingStatus({ lastPollAt: at, lastPollOk: true, lastPollError: '', lastPollSummary: summarize(result) })
     } catch (err) {
       await patchTimingStatus({ lastPollAt: at, lastPollOk: false, lastPollError: String((err as Error).message ?? err) }).catch(() => {})

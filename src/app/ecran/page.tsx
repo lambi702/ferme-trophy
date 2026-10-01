@@ -233,15 +233,26 @@ function TowerRow({ bike: b, top, left, width, height, fontBase, flashKey, move,
 // --- Colonne de droite -------------------------------------------------------
 
 function PointsStandings({ data }: { data: LiveState }) {
+  // Plus de 10 écuries : pages de 10 qui défilent toutes les 8 s (le top 10 reste la page 1).
   const max = 10
-  const teams = data.teams.slice(0, max)
+  const pages = Math.max(1, Math.ceil(data.teams.length / max))
+  const [page, setPage] = useState(0)
+  useEffect(() => {
+    if (pages <= 1) return setPage(0)
+    const t = setInterval(() => setPage((p) => (p + 1) % pages), 8000)
+    return () => clearInterval(t)
+  }, [pages])
+  const current = Math.min(page, pages - 1)
+  const teams = data.teams.slice(current * max, current * max + max)
   return (
     <section className="flex min-h-0 flex-[1.35] flex-col rounded-[1.2vw] border border-white/[0.07] bg-white/[0.025]" style={{ padding: '1.2vh 1vw' }}>
       <div className="flex shrink-0 items-baseline justify-between" style={{ marginBottom: '0.8vh' }}>
         <h2 className="font-mono-race tracking-wide" style={{ fontSize: '2.6vh' }}><span className="text-ft-gold">▌</span>ÉCURIES · POINTS</h2>
-        <p className="font-bold uppercase tracking-[0.2em] text-white/40" style={{ fontSize: '1.3vh' }}>à dépenser</p>
+        <p className="font-bold uppercase tracking-[0.2em] text-white/40" style={{ fontSize: '1.3vh' }}>
+          {pages > 1 ? `page ${current + 1}/${pages} · ` : ''}à dépenser
+        </p>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" style={{ gap: '0.5vh' }}>
+      <div key={current} className="slide-up flex min-h-0 flex-1 flex-col" style={{ gap: '0.5vh' }}>
         {teams.map((t) => (
           <div key={t.id} className="flex min-h-0 flex-1 items-center rounded-[0.4vw] bg-white/[0.035]" style={{ maxHeight: '5.4vh', paddingRight: '0.8vw' }}>
             <span className="flex h-full items-center justify-center font-mono-race tnum text-white/60" style={{ width: '3.6vh', fontSize: '2vh' }}>{t.pointsRank}</span>
@@ -252,9 +263,6 @@ function PointsStandings({ data }: { data: LiveState }) {
             <span className="font-mono-race tnum text-ft-gold" style={{ fontSize: '2.8vh' }}>{t.points}</span>
           </div>
         ))}
-        {data.teams.length > max && (
-          <p className="text-center text-white/35" style={{ fontSize: '1.5vh' }}>+ {data.teams.length - max} autres écuries sur ft.lambi-house.be</p>
-        )}
         {data.teams.length === 0 && <p className="text-white/30" style={{ fontSize: '2vh' }}>Aucune écurie.</p>}
       </div>
     </section>

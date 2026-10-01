@@ -1,9 +1,17 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Ferme Trophy 2026',
-  description: 'Classement live, points et marketplace — Ferme Trophy 2026, Embourg',
+  description: 'Classement live, points des écuries et radio course — Ferme Trophy 2026, Embourg',
+  appleWebApp: { capable: true, title: 'Ferme Trophy', statusBarStyle: 'black' },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#0a0a0c',
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

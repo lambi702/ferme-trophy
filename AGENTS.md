@@ -36,13 +36,17 @@ Décision de l'utilisateur (2026-10-01) : une écurie ne dépense plus ses point
 ## Chronométrage — O'Top / RaceResult
 Contexte : O'Top Services (Benjamin Olivier) chronomètre avec **RaceResult sur leur propre serveur en ligne**. Format exact pas encore connu au 2026-10-01 → tout a été préparé pour s'adapter sans redéployer :
 - **Point d'entrée unique** : `ingestRecords()` (`src/lib/timing/ingest.ts`). Deux natures : *passage* (dossard [+ heure/ID], dédoublonné par `externalId`, anti-relecture `minLapSeconds`) ou *compteur* (dossard + tours absolus → aligne les `RaceLapEvent` d'une source dédiée `…-counts`, y compris corrections à la baisse ; un dossard absent de la réponse n'est jamais touché ; une réponse vide n'efface rien).
-- **Parseur tolérant** `src/lib/timing/parse.ts` : JSON (objet, tableau, tableau de tableaux, enveloppe), CSV/TSV/`;`, formulaire, query string, texte brut. Colonnes auto-détectées (alias FR/EN/NL/DE), forçables dans l'admin. Heures `HH:MM:SS.mmm` / secondes depuis minuit interprétées en Europe/Brussels.
+- **Parseur tolérant** `src/lib/timing/parse.ts`, calé sur la doc officielle RaceResult : exporters par défaut *Raw Data Record JSON* (objet imbriqué, `Passing.UTCTime` prioritaire, `Invalid:true` ignoré), *Raw Data Record V1/V2* (`N°passage;Dossard;Date;Heure;…` — le dossard est en 2e colonne !), *RunScore RSBCI*, expressions perso type `[Event.ID];[RD_TimingPoint];[Bib];[RD_Time]`, listes `data/list` JSON sans en-tête, webhooks RaceResult, CSV, formulaire, query string. Un code transpondeur (`ZCMBG52`) n'est jamais lu comme un dossard. Colonnes forçables par nom ou par numéro, filtre par point de chrono. Heures `HH:MM:SS.mmm` / secondes depuis minuit en Europe/Brussels. **Tests : `npm test`** (`scripts/test-timing-parse.ts`, sans base) — à relancer après toute modif du parseur.
+- **Mode poll = instantanés** : une ligne sans compteur ni heure/ID y est ignorée (sinon +1 tour à chaque interrogation) et signalée dans le statut. Simple API RaceResult : cache 10-30 s, 406 au-delà d'1 appel/s → intervalle mini 5 s.
 - **Option A — push** (recommandé) : Exporter HTTP GET/POST RaceResult → `/api/timing/push/<jeton>` (jeton secret dans `Setting`, régénérable). Pas de daemon.
 - **Option B — poll** : le daemon (`scripts/timing-daemon.ts`, superviseur qui relit la config toutes les 5 s) interroge une URL (Simple API RaceResult, liste publiée...).
 - **Secours** : comptage manuel (+1/−1 par vélo, source `manual`) dans `/admin/chrono`, corrections de tours dans `/admin/course`.
 - `/admin/chrono` a un **banc d'essai** (coller un échantillon O'Top → voir l'interprétation, rien n'est écrit) et un bouton « Tester l'URL » (dry-run).
 - Liste des inscrits pour O'Top : `GET /api/export/participants` (CSV `;` UTF-8 BOM, une ligne par vélo : Bib, Lastname=surnom vélo, Firstname=écurie, Club=unité...). Bouton dans l'onglet Écuries.
 - **Le mode simulation (`mock`) ajoute de FAUX tours** à tous les vélos inscrits : il doit rester sur `off` en prod (défaut). La check-list du tableau de bord le signale.
+
+## Charge
+Testé le 2026-10-01 : 300 clients SSE simultanés + simulation à 1 tick/s → ~9 % CPU, `/api/live` médiane 5 ms / p95 43 ms, aucune connexion qui fuit après déconnexion.
 
 ## ⚠️ Ne pas tuer les process par motif depuis l'hôte
 Les process du conteneur sont visibles depuis l'hôte : un `pkill -f timing-daemon` lancé sur l'hôte tue AUSSI le daemon du conteneur de prod (c'est arrivé le 2026-10-01). Utiliser `docker compose restart web` ou des PID précis.

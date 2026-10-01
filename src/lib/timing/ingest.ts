@@ -8,6 +8,8 @@ export type IngestResult = {
   removed: number
   duplicates: number
   debounced: number
+  /** Lignes sans compteur ni heure/ID reçues en mode poll : inexploitables (sinon +1 tour à chaque interrogation). */
+  unusable: number
   unknownBibs: number[]
   mode: 'passings' | 'counts' | 'mixed' | 'empty'
 }
@@ -23,8 +25,13 @@ export type IngestResult = {
  *   les tours manquants, retire les derniers si le chrono a corrigé à la baisse.
  *   Un dossard absent de la réponse n'est jamais touché.
  */
-export async function ingestRecords(records: ParsedRecord[], source: string, cfg: Pick<TimingConfig, 'dataMode' | 'minLapSeconds'>): Promise<IngestResult> {
-  const result: IngestResult = { records: records.length, inserted: 0, removed: 0, duplicates: 0, debounced: 0, unknownBibs: [], mode: 'empty' }
+export async function ingestRecords(
+  records: ParsedRecord[],
+  source: string,
+  cfg: Pick<TimingConfig, 'dataMode' | 'minLapSeconds'>,
+  opts: { snapshot?: boolean } = {},
+): Promise<IngestResult> {
+  const result: IngestResult = { records: records.length, inserted: 0, removed: 0, duplicates: 0, debounced: 0, unusable: 0, unknownBibs: [], mode: 'empty' }
   if (records.length === 0) return result
 
   const known = new Set((await prisma.dossard.findMany({ select: { number: true } })).map((d) => d.number))
@@ -32,7 +39,10 @@ export async function ingestRecords(records: ParsedRecord[], source: string, cfg
 
   const asCount = (r: ParsedRecord) => cfg.dataMode === 'counts' || (cfg.dataMode === 'auto' && r.laps !== undefined)
   const counts = records.filter((r) => asCount(r) && r.laps !== undefined)
-  const passings = records.filter((r) => !asCount(r))
+  // Une réponse de poll est un INSTANTANÉ renvoyé à l'identique à chaque appel : un "passage" sans
+  // heure ni ID n'y est pas dédoublonnable → on l'ignore plutôt que de compter un tour par appel.
+  const passings = records.filter((r) => !asCount(r) && (!opts.snapshot || r.time || r.externalId))
+  result.unusable = records.filter((r) => !asCount(r)).length - passings.length
   result.mode = counts.length && passings.length ? 'mixed' : counts.length ? 'counts' : 'passings'
 
   // --- Compteurs absolus ---------------------------------------------------
@@ -105,6 +115,7 @@ export function summarize(r: IngestResult) {
   if (r.removed) parts.push(`−${r.removed} corrigé(s)`)
   if (r.duplicates) parts.push(`${r.duplicates} doublon(s)`)
   if (r.debounced) parts.push(`${r.debounced} relecture(s) ignorée(s)`)
+  if (r.unusable) parts.push(`⚠️ ${r.unusable} ligne(s) sans tours ni heure ignorée(s) — vérifier la colonne "tours"`)
   if (r.unknownBibs.length) parts.push(`dossards inconnus : ${r.unknownBibs.join(', ')}`)
   return parts.join(' · ')
 }
