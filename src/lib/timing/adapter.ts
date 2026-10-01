@@ -1,22 +1,18 @@
 /**
- * Interface unique que tout adaptateur de chronométrage doit respecter.
- * Le reste du système (classement course, calcul des tours) ne consomme
- * QUE des RaceLapEvent normalisés — jamais le format brut du prestataire.
+ * Contrat d'un adaptateur de chronométrage "actif" (qui va chercher ou
+ * génère les données lui-même, dans le daemon). Toutes les données passent
+ * ensuite par `ingestRecords()` (./ingest.ts) — le reste du système ne
+ * consomme QUE des RaceLapEvent normalisés.
  *
- * Pour brancher O'Top (ou tout autre prestataire) : implémenter cette
- * interface (probablement un poller REST ou un import périodique), et
- * l'enregistrer à la place de MockTimingAdapter dans le point d'entrée du
- * daemon. Rien d'autre dans le code ne doit changer.
+ * Adaptateurs disponibles (choisis à chaud depuis /admin/chrono, table Setting) :
+ * - MockTimingAdapter          : simulation pour démo/tests
+ * - RaceResultPollAdapter      : interroge une URL RaceResult (Simple API, liste...)
+ * Le mode "push" (Exporter HTTP RaceResult → /api/timing/push/<token>) ne
+ * passe pas par le daemon : c'est une route Next.js.
  */
-export interface NormalizedLapEvent {
-  dossardNumber: number
-  timestamp: Date
-}
-
 export interface TimingAdapter {
   /** Nom de la source, stocké tel quel dans RaceLapEvent.source. */
   readonly name: string
-  /** Démarre l'ingestion en continu ; appelle `onEvent` pour chaque passage détecté. */
-  start(onEvent: (event: NormalizedLapEvent) => void | Promise<void>): void
+  start(): void
   stop(): void
 }

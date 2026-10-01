@@ -17,6 +17,7 @@ const config: Config = {
           red: '#e10600', // rouge F1 officiel
           red2: '#ff3b30',
           gold: '#ffd60a',
+          green: '#00d26a',
           silver: '#c7c7cc',
         },
       },

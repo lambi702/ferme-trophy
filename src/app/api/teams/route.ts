@@ -1,17 +1,16 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { generatePin, slugify } from '@/lib/auth'
-import { jsonError, requireAdmin, requireOrganizer } from '@/lib/api-helpers'
+import { jsonError, requireStaff } from '@/lib/api-helpers'
+import { assignDossards, createTeam, parseDossardList } from '@/lib/teams'
+import { invalidateLive } from '@/lib/live'
 
 export async function GET(req: NextRequest) {
-  const admin = await requireAdmin(req)
-  const organizer = admin ? null : await requireOrganizer(req)
-  if (!admin && !organizer) return jsonError('Non autorisé', 403)
+  if (!(await requireStaff(req))) return jsonError('Non autorisé', 403)
 
   // Comité ET organisateurs voient le PIN — ils doivent pouvoir le
-  // retrouver à tout moment pour le recommuniquer à une équipe.
+  // retrouver à tout moment pour le recommuniquer à une écurie.
   const teams = await prisma.team.findMany({
-    include: { dossards: { select: { number: true } } },
+    include: { dossards: { select: { id: true, number: true, name: true }, orderBy: { number: 'asc' } } },
     orderBy: { createdAt: 'asc' },
   })
   return NextResponse.json(
@@ -22,51 +21,50 @@ export async function GET(req: NextRequest) {
       unitName: t.unitName,
       sectionName: t.sectionName,
       foulardName: t.foulardName,
+      foulardColor: t.foulardColor,
       foulardEmoji: t.foulardEmoji,
-      dossardNumbers: t.dossards.map((d) => d.number).sort((a, b) => a - b),
+      createdAt: t.createdAt,
+      dossards: t.dossards,
+      dossardNumbers: t.dossards.map((d) => d.number),
     })),
   )
 }
 
 /**
- * Création d'équipe — comité ET organisateurs (voir retour du comité :
- * les organisateurs doivent pouvoir créer une équipe et l'associer à un
- * vélo directement sur le terrain).
- *
- * Par défaut, l'équipe est créée VIERGE (unitName/sectionName vides) — le
- * PIN est généré et retourné pour être communiqué, à charge pour l'équipe
- * de se personnaliser elle-même via sa page. `unitNames` reste accepté en
- * option pour un import en masse si le comité a déjà une liste (CSV).
+ * Inscription d'une écurie — comité ET organisateurs. Tout est optionnel :
+ * nom d'écurie / unité / section (l'écurie peut les changer ensuite elle-même
+ * avec son PIN) et dossards ("12, 13" ou "12-14"). `count` crée N écuries
+ * vierges d'un coup (ancien comportement).
  */
 export async function POST(req: NextRequest) {
-  const admin = await requireAdmin(req)
-  const organizer = admin ? null : await requireOrganizer(req)
-  if (!admin && !organizer) return jsonError('Non autorisé', 403)
+  if (!(await requireStaff(req))) return jsonError('Non autorisé', 403)
+  const body = await req.json()
 
-  const { unitNames, count } = await req.json()
+  const count = Math.min(Math.max(Number(body.count) || 1, 1), 100)
+  const numbers = parseDossardList(body.dossards)
+  if (count > 1 && numbers.length > 0) return jsonError('Dossards : une écurie à la fois')
 
-  const names: string[] = Array.isArray(unitNames) && unitNames.length > 0
-    ? unitNames.map((n: string) => String(n).trim()).filter(Boolean)
-    : Array.from({ length: Number(count) > 0 ? Number(count) : 1 }, () => '')
-
-  const results: { unitName: string; slug: string; pin: string }[] = []
-
-  for (const unitName of names) {
-    const baseSlug = unitName ? slugify(unitName) : 'equipe'
-    let slug = baseSlug
-    let n = 1
-    while (await prisma.team.findUnique({ where: { slug } })) {
-      slug = `${baseSlug}-${++n}`
-    }
-
-    let pin = generatePin()
-    while (await prisma.team.findUnique({ where: { pin } })) {
-      pin = generatePin()
-    }
-
-    await prisma.team.create({ data: { unitName, slug, pin } })
-    results.push({ unitName, slug, pin })
+  if (numbers.length > 0) {
+    const taken = await prisma.dossard.findMany({ where: { number: { in: numbers }, teamId: { not: null } }, select: { number: true } })
+    if (taken.length > 0) return jsonError(`Dossard déjà attribué : ${taken.map((d) => `#${d.number}`).join(', ')}`, 409)
   }
 
-  return NextResponse.json({ created: results.length, teams: results })
+  const created = []
+  for (let i = 0; i < count; i++) {
+    const team = await createTeam({
+      foulardName: String(body.foulardName ?? '').trim(),
+      unitName: String(body.unitName ?? '').trim(),
+      sectionName: String(body.sectionName ?? '').trim(),
+    })
+    if (numbers.length > 0) {
+      const { error } = await assignDossards(team.id, numbers)
+      if (error) {
+        await prisma.team.delete({ where: { id: team.id } })
+        return jsonError(error, 409)
+      }
+    }
+    created.push({ id: team.id, slug: team.slug, pin: team.pin, foulardName: team.foulardName, dossardNumbers: numbers })
+  }
+  invalidateLive()
+  return NextResponse.json({ created: created.length, teams: created })
 }

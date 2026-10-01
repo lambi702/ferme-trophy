@@ -1,6 +1,8 @@
 /**
  * Scénario de démo rejouable (section 8 du handover). Purge et régénère
  * tout — à lancer avant chaque répétition/présentation au comité.
+ * ⚠️ JAMAIS en prod une fois les vraies inscriptions faites : ça efface tout
+ * (y compris les comptes comité). Pour la prod : /admin/course → remise à zéro.
  *
  * Usage : npm run seed
  */
@@ -45,6 +47,7 @@ async function main() {
   await prisma.organizer.deleteMany()
   await prisma.team.deleteMany()
   await prisma.adminUser.deleteMany()
+  await prisma.setting.deleteMany()
 
   console.log('👤 Compte comité...')
   const adminPassword = 'ferme2026'
@@ -112,8 +115,9 @@ async function main() {
         data: {
           teamId: team.id,
           organizerId: pick(organizers).id,
-          points: randInt(5, 30),
+          points: randInt(20, 60),
           reason: pick(MINI_GAMES),
+          performedBy: 'Julie',
           createdAt: new Date(now - randInt(0, 3 * 60 * 60 * 1000)),
         },
       })
@@ -134,31 +138,27 @@ async function main() {
 
   console.log('🏪 Catalogue marketplace...')
   const bonusItem = await prisma.marketplaceItem.create({
-    data: { name: 'Tour bonus', description: '+1 tour pour ton équipe', costPoints: 50, type: 'BONUS_SELF', lapEffect: 1 },
+    data: { name: 'Tour bonus', description: '+1 tour pour un de tes vélos', costPoints: 50, type: 'BONUS_SELF', lapEffect: 1 },
   })
   const malusItem = await prisma.marketplaceItem.create({
-    data: { name: 'Tour malus', description: '-1 tour pour une équipe cible', costPoints: 70, type: 'MALUS_OTHER', lapEffect: -1 },
+    data: { name: 'Tour malus', description: '−1 tour pour un vélo adverse', costPoints: 70, type: 'MALUS_OTHER', lapEffect: -1 },
   })
 
-  console.log('🛒 Quelques achats déjà effectués...')
-  for (const team of teams.slice(0, 3)) {
+  console.log('🛒 Quelques achats déjà effectués (par la direction de course)...')
+  const firstBike = async (teamId: string) => (await prisma.dossard.findFirstOrThrow({ where: { teamId }, orderBy: { number: 'asc' } })).id
+  const buy = async (buyerId: string, item: typeof bonusItem, targetDossardId: string) => {
     const purchase = await prisma.purchase.create({
-      data: { buyingTeamId: team.id, itemId: bonusItem.id, costPoints: bonusItem.costPoints },
+      data: {
+        buyingTeamId: buyerId, targetDossardId, itemId: item.id, itemName: item.name, type: item.type,
+        costPoints: item.costPoints, lapDelta: item.lapEffect, performedBy: 'Julie',
+      },
     })
     await prisma.raceAdjustment.create({
-      data: { teamId: team.id, lapDelta: bonusItem.lapEffect, source: `purchase:${purchase.id}`, purchaseId: purchase.id },
+      data: { dossardId: targetDossardId, lapDelta: item.lapEffect, source: 'purchase', reason: item.name, performedBy: 'Julie', purchaseId: purchase.id },
     })
   }
-  for (let i = 0; i < 2; i++) {
-    const buyer = teams[10 + i]
-    const target = teams[i]
-    const purchase = await prisma.purchase.create({
-      data: { buyingTeamId: buyer.id, targetTeamId: target.id, itemId: malusItem.id, costPoints: malusItem.costPoints },
-    })
-    await prisma.raceAdjustment.create({
-      data: { teamId: target.id, lapDelta: malusItem.lapEffect, source: `purchase:${purchase.id}`, purchaseId: purchase.id },
-    })
-  }
+  for (const team of teams.slice(0, 3)) await buy(team.id, bonusItem, await firstBike(team.id))
+  for (let i = 0; i < 2; i++) await buy(teams[10 + i].id, malusItem, await firstBike(teams[i].id))
 
   console.log('\n✅ Seed terminé.')
   console.log(`   Comité : comite@fermetrophy.be / ${adminPassword}`)

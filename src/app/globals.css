@@ -2,47 +2,152 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --ft-red: #e10600;
+  --ft-gold: #ffd60a;
+  --ft-green: #00d26a;
+  color-scheme: dark;
+}
+
 html, body {
-  height: 100%;
+  min-height: 100%;
 }
 
 body {
   background-color: #0a0a0c;
   background-image:
-    radial-gradient(circle at 20% 0%, rgba(225,6,0,0.18), transparent 40%),
-    radial-gradient(circle at 90% 20%, rgba(255,214,10,0.08), transparent 35%);
+    radial-gradient(circle at 15% -10%, rgba(225, 6, 0, 0.16), transparent 45%),
+    radial-gradient(circle at 100% 10%, rgba(255, 214, 10, 0.06), transparent 35%);
+  background-attachment: fixed;
   color: #f2f2f4;
-  font-family: 'Titillium Web', sans-serif;
+  font-family: 'Titillium Web', system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .font-mono-race {
-  font-family: 'Rajdhani', sans-serif;
+  font-family: 'Rajdhani', 'Titillium Web', sans-serif;
   font-weight: 700;
 }
 
-.card {
-  background-color: #151518;
-  border: 1px solid #232326;
-  border-radius: 0.75rem;
+.tnum {
+  font-variant-numeric: tabular-nums;
 }
 
 .checker-strip {
   height: 6px;
-  background-image: repeating-linear-gradient(
-    90deg,
-    #fff 0 10px,
-    #0a0a0c 10px 20px
-  );
+  background-image: repeating-linear-gradient(90deg, #fff 0 10px, #0a0a0c 10px 20px);
 }
 
-::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
+.checker-bg {
+  background-image: repeating-conic-gradient(rgba(255, 255, 255, 0.9) 0% 25%, rgba(0, 0, 0, 0.9) 0% 50%);
+  background-size: 16px 16px;
 }
-::-webkit-scrollbar-track {
-  background: #0a0a0c;
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-white/[0.07] bg-[#141417];
+  }
+  .card-2 {
+    @apply rounded-xl bg-[#1c1c20];
+  }
+  .label {
+    @apply mb-1.5 block text-[11px] font-bold uppercase tracking-[0.14em] text-white/45;
+  }
+  .input {
+    @apply w-full rounded-xl border border-white/10 bg-[#1c1c20] px-3.5 py-3 text-base text-white outline-none transition placeholder:text-white/25 focus:border-ft-red/70 focus:ring-2 focus:ring-ft-red/20;
+  }
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-3 font-mono-race text-base font-bold tracking-wide transition active:scale-[0.97] disabled:pointer-events-none disabled:opacity-35;
+  }
+  .btn-red {
+    @apply btn bg-ft-red text-white shadow-[0_6px_24px_-8px_rgba(225,6,0,0.8)] hover:brightness-110;
+  }
+  .btn-gold {
+    @apply btn bg-ft-gold text-black shadow-[0_6px_24px_-8px_rgba(255,214,10,0.6)] hover:brightness-105;
+  }
+  .btn-green {
+    @apply btn bg-ft-green text-black shadow-[0_6px_24px_-8px_rgba(0,210,106,0.6)] hover:brightness-105;
+  }
+  .btn-ghost {
+    @apply btn border border-white/10 bg-white/[0.04] text-white/80 hover:bg-white/[0.08];
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-sm font-semibold text-white/80 transition active:scale-95;
+  }
+  .chip-on {
+    @apply border-ft-red bg-ft-red/20 text-white;
+  }
 }
-::-webkit-scrollbar-thumb {
-  background: #e10600;
-  border-radius: 8px;
+
+/* --- Animations ----------------------------------------------------------- */
+@keyframes lap-flash {
+  0% { background-color: rgba(255, 255, 255, 0.28); }
+  100% { background-color: transparent; }
+}
+.lap-flash {
+  animation: lap-flash 1.4s ease-out;
+}
+
+@keyframes pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+.pop {
+  animation: pop 0.5s ease-out;
+}
+
+@keyframes slide-up {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.slide-up {
+  animation: slide-up 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes feed-in {
+  from { transform: translateX(-24px); opacity: 0; background-color: rgba(255, 214, 10, 0.25); }
+  to { transform: translateX(0); opacity: 1; }
+}
+.feed-in {
+  animation: feed-in 0.6s ease-out;
+}
+
+@keyframes banner-in {
+  0% { transform: translateY(-120%) skewX(-8deg); }
+  60% { transform: translateY(6%) skewX(-8deg); }
+  100% { transform: translateY(0) skewX(-8deg); }
+}
+.banner-in {
+  animation: banner-in 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+.pulse-dot {
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lap-flash, .pop, .slide-up, .feed-in, .banner-in, .pulse-dot { animation: none; }
+}
+
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+
+::-webkit-scrollbar { height: 8px; width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 8px; }
+
+@media print {
+  body { background: #fff; color: #000; }
+  .checker-strip { display: none; }
+}
+
+/* Barre d'action posée juste au-dessus de la nav du bas (direction de course). */
+.above-nav {
+  bottom: calc(68px + max(env(safe-area-inset-bottom), 0.5rem));
 }

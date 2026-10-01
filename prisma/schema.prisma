@@ -37,20 +37,23 @@ model Team {
 
   dossards           Dossard[]
   pointsTransactions PointsTransaction[]
-  purchasesMade      Purchase[]           @relation("BuyingTeam")
-  purchasesTargeted  Purchase[]           @relation("TargetTeam")
-  raceAdjustments    RaceAdjustment[]
+  purchasesMade      Purchase[]
 }
 
-// Un vélo = un dossard. Une équipe peut avoir plusieurs vélos (plusieurs
-// dossards) — d'où une table séparée plutôt qu'un champ unique sur Team.
+// Un vélo = un dossard. Une équipe (écurie) peut avoir plusieurs vélos
+// (plusieurs dossards) — d'où une table séparée plutôt qu'un champ unique sur
+// Team. Le classement course se fait PAR VÉLO ; les points sont PAR ÉCURIE.
 model Dossard {
   id        String   @id @default(cuid())
   number    Int      @unique
+  // Surnom du vélo, personnalisable par l'écurie (vide = "Vélo #n").
+  name      String   @default("")
   teamId    String?
   createdAt DateTime @default(now())
 
-  team Team? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  team              Team?            @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  adjustments       RaceAdjustment[]
+  purchasesTargeted Purchase[]
 }
 
 model Organizer {
@@ -63,12 +66,16 @@ model Organizer {
 }
 
 model PointsTransaction {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   teamId      String
   organizerId String?
   points      Int
   reason      String
-  createdAt   DateTime @default(now())
+  performedBy String    @default("")
+  // Annulation = soft delete (on garde la trace pour l'audit), exclue des soldes.
+  cancelledAt DateTime?
+  cancelledBy String?
+  createdAt   DateTime  @default(now())
 
   team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
   organizer Organizer? @relation(fields: [organizerId], references: [id], onDelete: SetNull)
@@ -82,6 +89,7 @@ model MarketplaceItem {
   description String   @default("")
   costPoints  Int
   type        ItemType
+  // Toujours signé selon le type : BONUS_SELF > 0, MALUS_OTHER < 0 (forcé par l'API).
   lapEffect   Int
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -89,44 +97,71 @@ model MarketplaceItem {
   purchases Purchase[]
 }
 
+// Achat bonus/malus. Ce sont les ORGANISATEURS (direction de course) qui
+// dépensent les points d'une écurie à sa demande — plus d'achat en
+// self-service par l'équipe. Cible = un VÉLO précis (dossard).
 model Purchase {
-  id           String   @id @default(cuid())
-  buyingTeamId String
-  targetTeamId String?
-  itemId       String
-  costPoints   Int
-  createdAt    DateTime @default(now())
+  id              String    @id @default(cuid())
+  buyingTeamId    String
+  targetDossardId String
+  itemId          String?
+  // Snapshot de l'item au moment de l'achat (le catalogue peut changer ensuite).
+  itemName        String
+  type            ItemType
+  costPoints      Int
+  lapDelta        Int
+  performedBy     String    @default("")
+  cancelledAt     DateTime?
+  cancelledBy     String?
+  createdAt       DateTime  @default(now())
 
-  buyingTeam Team            @relation("BuyingTeam", fields: [buyingTeamId], references: [id], onDelete: Cascade)
-  targetTeam Team?           @relation("TargetTeam", fields: [targetTeamId], references: [id], onDelete: Cascade)
-  item       MarketplaceItem @relation(fields: [itemId], references: [id])
-  adjustment RaceAdjustment?
+  buyingTeam    Team             @relation(fields: [buyingTeamId], references: [id], onDelete: Cascade)
+  targetDossard Dossard          @relation(fields: [targetDossardId], references: [id], onDelete: Cascade)
+  item          MarketplaceItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  adjustment    RaceAdjustment?
 
   @@index([buyingTeamId])
-  @@index([targetTeamId])
+  @@index([targetDossardId])
 }
 
+// Un passage sur la ligne (un tour). Source = 'raceresult-push',
+// 'raceresult-poll', 'manual', 'mock'... Le classement compte TOUS les
+// passages d'un dossard, quelle que soit la source.
 model RaceLapEvent {
   id            String   @id @default(cuid())
   dossardNumber Int
   timestamp     DateTime
   source        String
+  // Identifiant fourni par le chrono (ou bib@heure) — dédoublonnage des renvois.
+  externalId    String?  @unique
   rawPayload    Json?
   createdAt     DateTime @default(now())
 
   @@index([dossardNumber])
+  @@index([createdAt])
 }
 
+// Ajustement de tours sur un vélo : achat bonus/malus ou correction comité.
 model RaceAdjustment {
-  id         String   @id @default(cuid())
-  teamId     String
-  lapDelta   Int
-  source     String
-  purchaseId String?  @unique
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  dossardId   String
+  lapDelta    Int
+  source      String   // 'purchase' | 'correction'
+  reason      String   @default("")
+  performedBy String   @default("")
+  purchaseId  String?  @unique
+  createdAt   DateTime @default(now())
 
-  team     Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  purchase Purchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  dossard  Dossard   @relation(fields: [dossardId], references: [id], onDelete: Cascade)
+  purchase Purchase? @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
 
-  @@index([teamId])
+  @@index([dossardId])
+}
+
+// Réglages modifiables à chaud depuis l'admin (chrono, horloge de course),
+// lus aussi par le daemon de chronométrage — pas besoin de redéployer.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }

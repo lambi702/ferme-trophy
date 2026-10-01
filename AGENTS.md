@@ -12,11 +12,40 @@ docker compose build web && docker compose up -d web
 ```
 Le montage du volume est nécessaire pour que les fichiers de migration générés atterrissent sur l'hôte (et donc dans le prochain build de l'image) plutôt que de rester perdus dans un conteneur jetable.
 
+## Les 3 interfaces (refonte UX 2026-10-01)
+| URL | Pour qui | Contenu |
+|---|---|---|
+| `/` | Participants (téléphone) | Live : classement vélos, écuries/points, boutique (prix + règles), radio course. « Mon écurie » mémorisée sur le tél (localStorage). `/classement` redirige ici. |
+| `/equipe/{slug}` | Une écurie | Ses vélos (rang, tours), points, historique ; personnalisation avec le PIN (nom d'écurie, unité, section, couleur, emoji, **surnom de chaque vélo**). |
+| `/ecran` | Grand écran TV | Tour de chrono par vélo (animations dépassements/tours), points par écurie, radio, QR, horloge, **annonces plein écran** à chaque bonus/malus et changement de leader. Double-clic = plein écran. |
+| `/organisateur` | Direction de course (organisateurs ET comité) | 4 onglets : Points (mini-jeux, multi-écuries), Bonus/Malus (dépenser les points d'une écurie), Écuries (inscriptions + PIN + dossards + export O'Top), Historique (annulation). |
+| `/admin/*` | Comité | Tableau de bord + check-list jour J, Chrono, Course (horloge, corrections, remise à zéro), Écuries, Historique, Catalogue, Organisateurs. |
+| `/qrcodes` | Direction de course | Fiches imprimables QR + PIN par écurie. |
+
 ## Architecture clé
-- **3 types de session cookie distincts** (`ft_admin_session`, `ft_org_session`, `ft_team_session`), JWT via `jose`, voir `src/lib/auth.ts`. Un navigateur ne garde qu'une session team à la fois (utile de le rappeler si un test semble "coller" à la mauvaise équipe).
-- **Aucun solde de points/tours stocké** — tout est recalculé à la volée depuis `PointsTransaction`/`Purchase`/`RaceLapEvent`/`RaceAdjustment` (voir `src/lib/leaderboard.ts`). Pas de champ dénormalisé à resynchroniser.
-- **`TimingAdapter`** (`src/lib/timing/adapter.ts`) : interface unique pour brancher un prestataire de chronométrage. `MockTimingAdapter` tourne dans un process séparé (`scripts/timing-daemon.ts`, lancé en arrière-plan par `docker-entrypoint.sh` avec `tsx`, dans le **même conteneur** que Next.js). **Brancher O'Top = remplacer l'import dans `timing-daemon.ts`, rien d'autre ne doit changer.**
-- **Achats marketplace appliqués immédiatement** (pas de validation commissaire) — point ouvert du handover original, à trancher avant le jour J si besoin (voir README).
+- **3 types de session cookie distincts** (`ft_admin_session`, `ft_org_session`, `ft_team_session`), JWT via `jose`, voir `src/lib/auth.ts`. `requireStaff()` (`src/lib/api-helpers.ts`) = organisateur OU comité : le comité peut tout faire côté direction de course.
+- **Classement COURSE = par vélo (dossard)**, classement POINTS = par écurie. Les bonus/malus visent un **vélo précis** (`RaceAdjustment.dossardId`, `Purchase.targetDossardId`).
+- **Aucun solde stocké** — tout est recalculé à la volée (`src/lib/live.ts`, `getLiveState()`), mis en cache 1,5 s sur `globalThis` pour que 100 téléphones en SSE ne fassent pas 100 calculs. Un seul flux : `/api/live` + `/api/live/stream` (SSE, repli polling). Appeler `invalidateLive()` après toute écriture.
+- **Annulations = soft delete** (`cancelledAt`/`cancelledBy` sur `PointsTransaction` et `Purchase`) : exclues des soldes, gardées barrées dans l'historique. Annuler un achat supprime son `RaceAdjustment` (= remboursement + effet retiré).
+- **Achat = vérification du solde DANS une transaction avec `SELECT … FOR UPDATE` sur l'écurie** (`/api/purchases`) — testé : 6 achats simultanés ne font jamais passer le solde en négatif.
+- **Réglages à chaud dans la table `Setting`** (`src/lib/settings.ts`) : config chrono, état chrono, horloge de course. Lus par Next.js ET par le daemon.
+
+## ⚠️ Revirement volontaire : achats bonus/malus par la direction de course, plus par l'écurie
+Décision de l'utilisateur (2026-10-01) : une écurie ne dépense plus ses points elle-même. Elle va voir la direction de course, qui a le droit de dépenser les points de **toutes** les écuries (`POST /api/purchases`, `requireStaff`). Le PIN d'écurie ne sert plus qu'à **personnaliser** sa page. L'ancienne route `/api/marketplace/purchase` a été supprimée — ne pas la réintroduire.
+
+## Chronométrage — O'Top / RaceResult
+Contexte : O'Top Services (Benjamin Olivier) chronomètre avec **RaceResult sur leur propre serveur en ligne**. Format exact pas encore connu au 2026-10-01 → tout a été préparé pour s'adapter sans redéployer :
+- **Point d'entrée unique** : `ingestRecords()` (`src/lib/timing/ingest.ts`). Deux natures : *passage* (dossard [+ heure/ID], dédoublonné par `externalId`, anti-relecture `minLapSeconds`) ou *compteur* (dossard + tours absolus → aligne les `RaceLapEvent` d'une source dédiée `…-counts`, y compris corrections à la baisse ; un dossard absent de la réponse n'est jamais touché ; une réponse vide n'efface rien).
+- **Parseur tolérant** `src/lib/timing/parse.ts` : JSON (objet, tableau, tableau de tableaux, enveloppe), CSV/TSV/`;`, formulaire, query string, texte brut. Colonnes auto-détectées (alias FR/EN/NL/DE), forçables dans l'admin. Heures `HH:MM:SS.mmm` / secondes depuis minuit interprétées en Europe/Brussels.
+- **Option A — push** (recommandé) : Exporter HTTP GET/POST RaceResult → `/api/timing/push/<jeton>` (jeton secret dans `Setting`, régénérable). Pas de daemon.
+- **Option B — poll** : le daemon (`scripts/timing-daemon.ts`, superviseur qui relit la config toutes les 5 s) interroge une URL (Simple API RaceResult, liste publiée...).
+- **Secours** : comptage manuel (+1/−1 par vélo, source `manual`) dans `/admin/chrono`, corrections de tours dans `/admin/course`.
+- `/admin/chrono` a un **banc d'essai** (coller un échantillon O'Top → voir l'interprétation, rien n'est écrit) et un bouton « Tester l'URL » (dry-run).
+- Liste des inscrits pour O'Top : `GET /api/export/participants` (CSV `;` UTF-8 BOM, une ligne par vélo : Bib, Lastname=surnom vélo, Firstname=écurie, Club=unité...). Bouton dans l'onglet Écuries.
+- **Le mode simulation (`mock`) ajoute de FAUX tours** à tous les vélos inscrits : il doit rester sur `off` en prod (défaut). La check-list du tableau de bord le signale.
+
+## ⚠️ Ne pas tuer les process par motif depuis l'hôte
+Les process du conteneur sont visibles depuis l'hôte : un `pkill -f timing-daemon` lancé sur l'hôte tue AUSSI le daemon du conteneur de prod (c'est arrivé le 2026-10-01). Utiliser `docker compose restart web` ou des PID précis.
 
 ## ⚠️ Revirement volontaire vs le handover d'origine : comptes organisateur
 Le handover initial (section 5) demandait un **self-service** pour les comptes organisateur (nom + PIN, création automatique au premier login). **Ça a été retiré suite à un retour direct du comité** : n'importe qui pouvait ainsi se créer un accès et créditer des points à sa propre équipe (triche). Désormais :
@@ -29,20 +58,23 @@ Le handover initial (section 5) demandait un **self-service** pour les comptes o
 ## ⚠️ Revirement volontaire vs le handover d'origine : PIN équipe en clair + multi-dossards
 Deux changements de fond suite à un retour direct du comité :
 - **`Team.pin` est stocké EN CLAIR** (pas de hash, contrairement à `Organizer.pinHash`/`AdminUser.passwordHash`). Décision assumée : les organisateurs doivent pouvoir retrouver le PIN d'une équipe à tout moment pour le recommuniquer (badge/QR perdu, équipe qui a oublié) — un hash à sens unique rendrait ça impossible. Enjeu jugé faible (pas de données sensibles derrière un PIN d'équipe scoute). `GET /api/teams` renvoie donc le PIN en clair à tout comité/organisateur authentifié — **ne jamais exposer cette route sans authentification**.
-- **Une équipe peut avoir plusieurs dossards** (plusieurs vélos) — `Team.dossardNumber` (unique, 1-1) a été remplacé par un modèle `Dossard` séparé (`teamId` nullable, relation 1-N). `computeCourseLeaderboard()` (`src/lib/leaderboard.ts`) additionne les tours de TOUS les dossards d'une équipe. Gestion des dossards : `/api/dossards` (pool, création par plage) + `/api/dossards/{id}` PATCH (assignation à une équipe) — comité ET organisateurs.
-- **Les équipes sont créées VIERGES par défaut** (`unitName`/`sectionName`/`foulardName` vides) — `POST /api/teams` sans `unitNames` crée `count` équipes vides avec juste un slug technique (`equipe`, `equipe-2`...) et un PIN. C'est l'équipe elle-même qui se personnalise ensuite via `/api/teams/{slug}/foulard` (nom d'unité, nom de section, foulard). Le slug ne change JAMAIS après création (déjà imprimé sur le QR code) même si le nom change.
-- **Création d'équipe + assignation de dossard ouvertes aux organisateurs**, pas juste au comité (`src/components/TeamsAndDossardsManager.tsx`, réutilisé par `/admin/equipes` et `/organisateur/equipes`).
+- **Une équipe peut avoir plusieurs dossards** (plusieurs vélos) — `Team.dossardNumber` (unique, 1-1) a été remplacé par un modèle `Dossard` séparé (`teamId` nullable, relation 1-N). Depuis le 2026-10-01 le classement course est **par vélo** (chaque dossard classé séparément), les points restent par écurie. Gestion : `POST /api/teams` accepte directement `dossards: "12, 13"` ; `/api/teams/{slug}/dossards` POST/DELETE pour ajouter/retirer un vélo ; `/api/dossards` reste dispo (pool) — comité ET organisateurs.
+- **Les noms sont optionnels à l'inscription** — l'écurie se personnalise ensuite elle-même via `/api/teams/{slug}/foulard` (session PIN ; la direction de course peut aussi corriger). Le slug ne change JAMAIS après création (déjà imprimé sur le QR code) même si le nom change.
+- **Création d'écurie + dossards ouvertes aux organisateurs**, pas juste au comité (`src/components/staff/EcuriesManager.tsx`, réutilisé par `/admin/equipes` et l'onglet Écuries de `/organisateur`).
 
 ## Déployer un changement (sans migration de schéma)
 ```bash
 docker compose build web && docker compose up -d web
 ```
 
-## Rejouer le scénario de démo
+## Rejouer le scénario de démo — ⚠️ PLUS EN PROD
 ```bash
 docker compose exec web npx tsx prisma/seed.ts
 ```
-Purge et régénère tout (14 équipes, 3 organisateurs, historique de points, tours déjà courus, quelques achats bonus/malus déjà effectués). Identifiants affichés dans la sortie de la commande.
+Purge et régénère TOUT, y compris les comptes comité (identifiants de démo publics dans le seed). **Ne plus lancer en prod** depuis la remise à zéro du 2026-10-01 (vraies inscriptions). Pour la prod : `/admin/course` → zone dangereuse (« remettre le jeu à zéro » garde écuries/dossards ; « tout effacer » garde comptes, catalogue, réglages) ou `/admin/chrono` → « remettre les tours à zéro » (après les tests O'Top, avant le départ).
+
+## Remise à zéro du 2026-10-01
+Toutes les données de démo ont été effacées pour les vraies inscriptions (712k faux tours de la simulation, 46 écuries de test, comptes organisateurs de démo au PIN 1234, compte comité de démo `comite@fermetrophy.be` dont le mot de passe était dans le seed). Conservés : le compte comité de l'utilisateur, le catalogue. Sauvegarde avant reset : `/root/backups/ft-2026-10-01-1637-avant-reset.dump` (`pg_restore`).
 
 ## Secrets
 `.env` (jamais commité, voir `.env.example`) : `DB_PASSWORD`, `JWT_SECRET`. Comité et organisateurs de démo créés par `prisma/seed.ts`, pas par variables d'env (contrairement aux deux autres sites).

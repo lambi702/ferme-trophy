@@ -1,281 +1,362 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import Link from 'next/link'
-import { useSSE } from '@/lib/useSSE'
+import { useCallback, useEffect, useState } from 'react'
+import { useLive, useMyTeam, useNow } from '@/lib/useLive'
+import type { FeedItem } from '@/lib/live-types'
+import { bikeLabel } from '@/lib/live-types'
+import { plural, relTime, signed, textOn } from '@/lib/format'
+import { BackLink, Empty, FeedRow, Medal, NumberPlate, Spinner, TeamBadge, api, useToast } from '@/components/ui'
 
-type CourseRow = {
-  teamId: string
+type TeamDetail = {
+  id: string
   slug: string
-  dossardNumbers: number[]
-  adjustedLaps: number
-  rank: number
-}
-
-type PublicInfo = {
-  slug: string
+  name: string
   unitName: string
   sectionName: string
-  dossardNumbers: number[]
   foulardName: string
   foulardColor: string
   foulardEmoji: string
+  bikes: { number: number; name: string }[]
+  feed: FeedItem[]
 }
 
-type MeInfo = PublicInfo & { id: string; pointsBalance: number }
-
-type MarketItem = {
-  id: string
-  name: string
-  description: string
-  costPoints: number
-  type: 'BONUS_SELF' | 'MALUS_OTHER'
-  lapEffect: number
-  active: boolean
+type Draft = {
+  foulardName: string
+  unitName: string
+  sectionName: string
+  foulardColor: string
+  foulardEmoji: string
+  bikes: Record<number, string>
 }
 
-type OtherTeam = { id: string; slug: string; unitName: string; foulardName: string; foulardEmoji: string }
-
-const EMOJIS = ['🏁', '🏎️', '🔥', '⚡', '🦅', '🐺', '🦁', '🐉', '⭐', '💥', '🛞', '🏆']
+const COLORS = ['#e10600', '#ff8700', '#ffd60a', '#00d26a', '#0e9f6e', '#00d4ff', '#1e5bc6', '#6b2bd9', '#d61f8c', '#ff5fa2', '#8b5a2b', '#c7c7cc', '#f2f2f4', '#2b2b30']
+const EMOJIS = [
+  '🏁', '🏎️', '🚲', '🔥', '⚡', '💥', '🚀', '⭐', '🏆', '👑', '💎', '🎯',
+  '🦅', '🐺', '🦁', '🐯', '🐆', '🐉', '🦊', '🐻', '🐗', '🦉', '🐍', '🦈',
+  '🐝', '🦄', '🐸', '🐙', '🦖', '🐄', '🐓', '🐑', '🚜', '🌽', '🍀', '🌪️',
+  '☄️', '🌈', '🍕', '🥖', '🍺', '🧀', '🎸', '🤘', '👻', '🤖', '🛞', '🪖',
+]
 
 export default function EquipePage({ params }: { params: { slug: string } }) {
   const { slug } = params
-  const [info, setInfo] = useState<PublicInfo | null>(null)
-  const [me, setMe] = useState<MeInfo | null>(null)
-  const [pin, setPin] = useState('')
-  const [unlockError, setUnlockError] = useState('')
-  const [items, setItems] = useState<MarketItem[]>([])
-  const [others, setOthers] = useState<OtherTeam[]>([])
-  const [purchaseMsg, setPurchaseMsg] = useState('')
-  const [unitName, setUnitName] = useState('')
-  const [sectionName, setSectionName] = useState('')
-  const [foulardName, setFoulardName] = useState('')
+  const { data: live } = useLive()
+  const now = useNow(10000)
+  const [mySlug, setMySlug] = useMyTeam()
+  const [detail, setDetail] = useState<TeamDetail | null>(null)
+  const [notFound, setNotFound] = useState(false)
+  const [unlocked, setUnlocked] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const toast = useToast()
 
-  // Score en live : on se branche sur le même flux SSE que le classement
-  // public et on extrait juste la ligne de cette équipe.
-  const course = useSSE<CourseRow[]>('/api/leaderboard/course/stream')
-  const liveRow = course.data?.find((r) => r.slug === slug)
-
-  const loadPublic = () => fetch(`/api/teams/${slug}`).then((r) => r.json()).then(setInfo)
-  const loadMe = () =>
-    fetch('/api/team/me').then(async (r) => {
-      if (!r.ok) return
-      const data: MeInfo = await r.json()
-      if (data.slug === slug) {
-        setMe(data)
-        setUnitName(data.unitName)
-        setSectionName(data.sectionName)
-        setFoulardName(data.foulardName)
-      }
-    })
-  const loadItems = () => fetch('/api/marketplace/items').then((r) => r.json()).then(setItems)
-
-  useEffect(() => {
-    loadPublic()
-    loadMe()
-    loadItems()
-    fetch('/api/teams/public').then((r) => r.json()).then(setOthers)
+  const loadDetail = useCallback(async () => {
+    const { ok, data } = await api<TeamDetail>(`/api/teams/${slug}`)
+    if (!ok) return setNotFound(true)
+    setDetail(data)
   }, [slug])
 
-  const handleUnlock = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setUnlockError('')
-    const res = await fetch('/api/team/unlock', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug, pin }),
+  useEffect(() => {
+    loadDetail()
+    api<{ slug: string }>('/api/team/me').then(({ ok, data }) => setUnlocked(ok && data.slug === slug))
+    const t = setInterval(loadDetail, 15000)
+    return () => clearInterval(t)
+  }, [slug, loadDetail])
+
+  const startEditing = () => {
+    if (!detail) return
+    setDraft({
+      foulardName: detail.foulardName,
+      unitName: detail.unitName,
+      sectionName: detail.sectionName,
+      foulardColor: detail.foulardColor,
+      foulardEmoji: detail.foulardEmoji,
+      bikes: Object.fromEntries(detail.bikes.map((b) => [b.number, b.name])),
     })
-    if (!res.ok) {
-      const body = await res.json()
-      setUnlockError(body.error || 'Erreur')
-      return
-    }
-    await loadMe()
+    setEditing(true)
   }
 
-  const saveField = async (field: string, value: string) => {
-    const res = await fetch(`/api/teams/${slug}/foulard`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: value }),
+  const save = async () => {
+    if (!draft) return
+    const { ok, data } = await api(`/api/teams/${slug}/foulard`, 'PATCH', {
+      ...draft,
+      bikes: Object.entries(draft.bikes).map(([number, name]) => ({ number: Number(number), name })),
     })
-    if (res.ok) {
-      await loadMe()
-      await loadPublic()
-    }
+    if (!ok) return toast.show(data.error ?? 'Erreur', 'error')
+    toast.show('Écurie mise à jour ✓')
+    setEditing(false)
+    loadDetail()
   }
 
-  const handlePurchase = async (item: MarketItem, targetTeamId?: string) => {
-    setPurchaseMsg('')
-    const res = await fetch('/api/marketplace/purchase', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itemId: item.id, targetTeamId }),
-    })
-    const body = await res.json()
-    if (!res.ok) {
-      setPurchaseMsg(`❌ ${body.error}`)
-    } else {
-      setPurchaseMsg(`✅ ${item.name} appliqué !`)
-      await loadMe()
-    }
+  const lock = async () => {
+    await api('/api/team/logout', 'POST')
+    setUnlocked(false)
+    setEditing(false)
   }
 
-  if (!info) return <main className="min-h-screen flex items-center justify-center text-white/40">Chargement...</main>
+  if (notFound) return <main className="mx-auto max-w-lg px-4 py-8"><BackLink href="/" label="Live" /><Empty icon="🤷" title="Écurie introuvable" hint="Le lien est peut-être incomplet. Retourne au classement pour la retrouver." /></main>
+  if (!detail) return <Spinner />
 
-  const displayName = info.foulardName || info.unitName || 'Équipe sans nom'
-  const rank = liveRow?.rank ?? null
-  const adjustedLaps = liveRow?.adjustedLaps ?? 0
-  const dossardNumbers = liveRow?.dossardNumbers ?? info.dossardNumbers
+  const liveTeam = live?.teams.find((t) => t.id === detail.id)
+  const liveBikes = live?.bikes.filter((b) => b.teamId === detail.id) ?? []
+  // Pendant l'édition, la carte d'en-tête montre le brouillon (aperçu en direct).
+  const view = editing && draft
+    ? { name: draft.foulardName || detail.name, color: draft.foulardColor, emoji: draft.foulardEmoji, unit: draft.unitName, section: draft.sectionName }
+    : { name: detail.name, color: detail.foulardColor, emoji: detail.foulardEmoji, unit: detail.unitName, section: detail.sectionName }
+  const isMine = mySlug === slug
 
   return (
-    <main className="min-h-screen px-4 py-8 max-w-lg mx-auto">
-      <Link href="/classement" className="font-mono-race text-ft-silver text-sm">← Classement</Link>
+    <main className="mx-auto min-h-screen max-w-lg px-4 pb-32 pt-4">
+      <BackLink href="/" label="Classement live" />
 
-      <div className="card p-6 mt-4 text-center" style={{ borderColor: info.foulardColor, borderWidth: 2 }}>
-        <span className="text-6xl">{info.foulardEmoji}</span>
-        <h1 className="font-mono-race text-2xl font-bold mt-2">{displayName}</h1>
-        {info.unitName && <p className="text-white/40 text-sm">{info.unitName}{info.sectionName && ` — ${info.sectionName}`}</p>}
-        <div className="flex items-center justify-center gap-6 mt-4">
-          <div>
-            <p className="text-white/40 text-xs">{dossardNumbers.length > 1 ? 'Dossards' : 'Dossard'}</p>
-            <p className="font-mono-race text-2xl font-bold" style={{ color: info.foulardColor }}>
-              {dossardNumbers.length > 0 ? dossardNumbers.map((n) => `#${n}`).join(' ') : '—'}
-            </p>
+      {/* En-tête aux couleurs de l'écurie */}
+      <section
+        className="relative mt-3 overflow-hidden rounded-3xl border p-5"
+        style={{ borderColor: `${view.color}88`, background: `linear-gradient(150deg, ${view.color}55 0%, ${view.color}18 45%, #141417 80%)` }}
+      >
+        <div className="checker-bg absolute -right-6 -top-6 h-24 w-24 rotate-12 opacity-[0.07]" />
+        <div className="flex items-center gap-4">
+          <TeamBadge emoji={view.emoji} color={view.color} size={76} />
+          <div className="min-w-0 flex-1">
+            <h1 className="font-mono-race text-3xl leading-[0.95]">{view.name}</h1>
+            {(view.unit || view.section) && <p className="mt-1 text-sm text-white/60">{[view.unit, view.section].filter(Boolean).join(' · ')}</p>}
           </div>
-          <div>
-            <p className="text-white/40 text-xs">Classement</p>
-            <p className="font-mono-race text-2xl font-bold">{rank ? `${rank}e` : '—'}</p>
+        </div>
+        <button
+          onClick={() => setMySlug(isMine ? null : slug)}
+          className={`mt-4 rounded-full px-3 py-1.5 text-xs font-bold transition ${isMine ? 'bg-ft-gold text-black' : 'bg-black/30 text-white/70 hover:text-white'}`}
+        >
+          {isMine ? '⭐ Mon écurie' : '☆ C\'est mon écurie'}
+        </button>
+      </section>
+
+      {/* Chiffres clés */}
+      <section className="mt-3 grid grid-cols-3 gap-2">
+        <Stat label="Points" value={liveTeam?.points ?? '—'} tone="gold" sub={liveTeam ? `#${liveTeam.pointsRank} au général` : undefined} />
+        <Stat label="Tours" value={liveTeam?.totalLaps ?? '—'} sub={plural(detail.bikes.length, 'vélo')} />
+        <Stat label="Meilleur vélo" value={liveTeam?.bestRank ? `P${liveTeam.bestRank}` : '—'} sub={live ? `sur ${live.bikes.length}` : undefined} />
+      </section>
+
+      {/* Vélos */}
+      <section className="mt-6">
+        <h2 className="mb-2 font-mono-race text-lg">{detail.bikes.length > 1 ? 'Nos vélos' : 'Notre vélo'}</h2>
+        {liveBikes.length === 0 && <p className="card p-4 text-sm text-white/45">Pas encore de dossard attribué — passe voir la direction de course.</p>}
+        <div className="space-y-2">
+          {liveBikes.map((b) => (
+            <div key={b.dossardId} className="card flex items-center gap-3 p-3">
+              <Medal rank={b.rank} className="h-11 w-11 text-xl" />
+              <NumberPlate number={b.number} color={b.teamColor} className="text-2xl" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-bold">{bikeLabel(b)}</p>
+                <p className="text-xs text-white/45">
+                  {b.lastLapAt ? `Dernier tour ${relTime(b.lastLapAt, now)}` : 'Pas encore de tour'}
+                  {b.gap > 0 && ` · ${b.gap} T du leader`}
+                </p>
+              </div>
+              {b.adjustment !== 0 && (
+                <span className={`rounded-md px-1.5 py-0.5 font-mono-race text-sm ${b.adjustment > 0 ? 'bg-ft-green/15 text-ft-green' : 'bg-ft-red/20 text-ft-red2'}`}>
+                  {signed(b.adjustment)}
+                </span>
+              )}
+              <div className="text-right">
+                <p className="font-mono-race tnum text-3xl leading-none">{b.laps}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-white/35">tours</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Dépenser ses points */}
+      <section className="mt-4 flex items-center gap-3 rounded-2xl border border-ft-gold/25 bg-ft-gold/[0.06] p-4">
+        <span className="text-2xl">🛒</span>
+        <p className="text-sm text-white/75">
+          Pour transformer vos <span className="font-bold text-ft-gold">{liveTeam?.points ?? 0} points</span> en tours bonus (ou en malus pour les autres),
+          venez voir la <span className="font-bold">direction de course</span>.
+        </p>
+      </section>
+
+      {/* Personnalisation */}
+      <section className="mt-6">
+        {!unlocked ? (
+          <UnlockCard slug={slug} onUnlocked={() => { setUnlocked(true); setMySlug(slug); startEditing() }} />
+        ) : !editing ? (
+          <div className="card flex items-center gap-3 p-4">
+            <span className="text-2xl">🎨</span>
+            <p className="flex-1 text-sm text-white/70">Page déverrouillée — change le nom, la couleur, l&apos;emoji et le surnom de tes vélos.</p>
+            <button onClick={startEditing} className="btn-red px-4 py-2 text-sm">Personnaliser</button>
           </div>
-          <div>
-            <p className="text-white/40 text-xs">Tours {course.live && <span className="text-ft-red">●</span>}</p>
-            <p className="font-mono-race text-2xl font-bold text-ft-red">{adjustedLaps}</p>
+        ) : draft && (
+          <Editor draft={draft} setDraft={setDraft} bikes={detail.bikes} onCancel={() => setEditing(false)} onLock={lock} />
+        )}
+      </section>
+
+      {/* Historique */}
+      <section className="mt-6">
+        <h2 className="mb-2 font-mono-race text-lg">Historique</h2>
+        {detail.feed.length === 0 ? (
+          <p className="card p-4 text-sm text-white/45">Rien pour l&apos;instant. Les points gagnés, achats et malus subis apparaîtront ici.</p>
+        ) : (
+          <div className="space-y-1.5">{detail.feed.map((item) => <FeedRow key={item.id} item={item} now={now} perspectiveTeamId={detail.id} />)}</div>
+        )}
+      </section>
+
+      {editing && (
+        <div className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0d0d10]/95 px-4 pt-3 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-lg gap-2">
+            <button onClick={() => setEditing(false)} className="btn-ghost flex-1">Annuler</button>
+            <button onClick={save} className="btn-red flex-[2]">Enregistrer</button>
           </div>
+        </div>
+      )}
+      {toast.node}
+    </main>
+  )
+}
+
+function Stat({ label, value, sub, tone }: { label: string; value: string | number; sub?: string; tone?: 'gold' }) {
+  return (
+    <div className="card px-3 py-3 text-center">
+      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">{label}</p>
+      <p className={`font-mono-race tnum text-3xl leading-tight ${tone === 'gold' ? 'text-ft-gold' : ''}`}>{value}</p>
+      {sub && <p className="text-[11px] text-white/35">{sub}</p>}
+    </div>
+  )
+}
+
+function UnlockCard({ slug, onUnlocked }: { slug: string; onUnlocked: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [pin, setPin] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    const { ok, data } = await api('/api/team/unlock', 'POST', { slug, pin })
+    setBusy(false)
+    if (!ok) return setError(data.error ?? 'PIN incorrect')
+    onUnlocked()
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="card flex w-full items-center gap-3 p-4 text-left transition hover:border-white/20">
+        <span className="text-2xl">✏️</span>
+        <span className="flex-1">
+          <span className="block font-bold">Personnaliser l&apos;écurie</span>
+          <span className="block text-xs text-white/45">Nom, couleur, emoji, surnom des vélos — avec le PIN reçu à l&apos;inscription.</span>
+        </span>
+        <span className="text-white/30">→</span>
+      </button>
+    )
+  }
+  return (
+    <form onSubmit={submit} className="card slide-up p-4">
+      <label className="label">PIN de l&apos;écurie</label>
+      <div className="flex gap-2">
+        <input
+          autoFocus value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          inputMode="numeric" placeholder="• • • • •"
+          className="input text-center font-mono-race text-2xl tracking-[0.5em]"
+        />
+        <button disabled={pin.length < 4 || busy} className="btn-red px-5">OK</button>
+      </div>
+      {error && <p className="mt-2 text-sm text-ft-red2">{error}</p>}
+      <p className="mt-2 text-xs text-white/35">PIN perdu ? La direction de course peut le retrouver.</p>
+    </form>
+  )
+}
+
+function Editor({
+  draft, setDraft, bikes, onCancel, onLock,
+}: {
+  draft: Draft
+  setDraft: (d: Draft) => void
+  bikes: { number: number; name: string }[]
+  onCancel: () => void
+  onLock: () => void
+}) {
+  const set = (patch: Partial<Draft>) => setDraft({ ...draft, ...patch })
+  return (
+    <div className="card slide-up space-y-5 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-mono-race text-lg">🎨 Personnaliser</h2>
+        <button onClick={onLock} className="text-xs font-semibold text-white/40 hover:text-white">🔒 Verrouiller</button>
+      </div>
+
+      <div>
+        <label className="label">Nom d&apos;écurie — affiché partout</label>
+        <input value={draft.foulardName} onChange={(e) => set({ foulardName: e.target.value })} maxLength={60} placeholder="ex : Scuderia Faucons Rouges" className="input" />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="label">Unité</label>
+          <input value={draft.unitName} onChange={(e) => set({ unitName: e.target.value })} maxLength={80} placeholder="ex : 3e Embourg" className="input" />
+        </div>
+        <div>
+          <label className="label">Section</label>
+          <input value={draft.sectionName} onChange={(e) => set({ sectionName: e.target.value })} maxLength={60} placeholder="ex : Pionniers" className="input" />
         </div>
       </div>
 
-      {!me ? (
-        <form onSubmit={handleUnlock} className="card p-5 mt-4 space-y-3">
-          <p className="font-mono-race font-bold text-sm">🔒 Déverrouiller (PIN de l'équipe)</p>
-          <input
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            placeholder="Code PIN"
-            inputMode="numeric"
-            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 font-mono-race text-lg tracking-widest text-center"
-          />
-          {unlockError && <p className="text-ft-red2 text-sm">{unlockError}</p>}
-          <button className="w-full bg-ft-red text-white font-mono-race font-bold py-2.5 rounded-lg">Déverrouiller</button>
-        </form>
-      ) : (
-        <div className="card p-5 mt-4">
-          <p className="font-mono-race font-bold text-sm mb-3">⭐ Solde de points : <span className="text-ft-gold text-xl">{me.pointsBalance}</span></p>
-          <p className="text-white/40 text-xs mb-4">🎨 Personnalise ta page — elle était vierge, à toi de la faire vivre !</p>
+      <div>
+        <label className="label">Couleur</label>
+        <div className="flex flex-wrap gap-2">
+          {COLORS.map((c) => (
+            <button
+              key={c} onClick={() => set({ foulardColor: c })} aria-label={c}
+              className={`h-9 w-9 rounded-full transition ${draft.foulardColor.toLowerCase() === c ? 'scale-110 ring-2 ring-white ring-offset-2 ring-offset-[#141417]' : ''}`}
+              style={{ backgroundColor: c }}
+            />
+          ))}
+          <label className="relative flex h-9 w-9 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-dashed border-white/30 text-xs text-white/50" title="Couleur perso">
+            +
+            <input type="color" value={draft.foulardColor} onChange={(e) => set({ foulardColor: e.target.value })} className="absolute inset-0 cursor-pointer opacity-0" />
+          </label>
+        </div>
+        <p className="mt-2 inline-block rounded-md px-2 py-1 font-mono-race text-sm" style={{ backgroundColor: draft.foulardColor, color: textOn(draft.foulardColor) }}>
+          Aperçu dossard #{bikes[0]?.number ?? 12}
+        </p>
+      </div>
 
-          <p className="text-xs font-mono-race text-white/50 mb-1">Nom de l'unité</p>
-          <input
-            value={unitName}
-            onChange={(e) => setUnitName(e.target.value)}
-            onBlur={() => saveField('unitName', unitName)}
-            placeholder="ex: 3e Unité Saint-Pierre"
-            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
-          />
+      <div>
+        <label className="label">Emoji</label>
+        <div className="grid grid-cols-8 gap-1.5">
+          {EMOJIS.map((e) => (
+            <button
+              key={e} onClick={() => set({ foulardEmoji: e })}
+              className={`aspect-square rounded-lg text-xl transition ${draft.foulardEmoji === e ? 'bg-ft-red/30 ring-2 ring-ft-red' : 'bg-white/[0.04] hover:bg-white/10'}`}
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+        <input
+          value={draft.foulardEmoji} onChange={(e) => set({ foulardEmoji: [...e.target.value].slice(-2).join('') })}
+          placeholder="ou colle ton emoji" className="input mt-2 w-40 text-center text-xl"
+        />
+      </div>
 
-          <p className="text-xs font-mono-race text-white/50 mb-1">Nom de la section</p>
-          <input
-            value={sectionName}
-            onChange={(e) => setSectionName(e.target.value)}
-            onBlur={() => saveField('sectionName', sectionName)}
-            placeholder="ex: Louveteaux, Éclaireurs..."
-            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
-          />
-
-          <p className="text-xs font-mono-race text-white/50 mb-1">Nom d'écurie (affiché au classement)</p>
-          <input
-            value={foulardName}
-            onChange={(e) => setFoulardName(e.target.value)}
-            onBlur={() => saveField('foulardName', foulardName)}
-            placeholder="ex: Écurie Faucons Rouges"
-            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3"
-          />
-
-          <p className="text-xs font-mono-race text-white/50 mb-1">Couleur</p>
-          <input
-            type="color"
-            defaultValue={me.foulardColor}
-            onChange={(e) => saveField('foulardColor', e.target.value)}
-            className="w-16 h-9 rounded mb-3 bg-transparent"
-          />
-
-          <p className="text-xs font-mono-race text-white/50 mb-1">Emoji</p>
-          <div className="flex flex-wrap gap-1.5">
-            {EMOJIS.map((e) => (
-              <button
-                key={e}
-                onClick={() => saveField('foulardEmoji', e)}
-                className={`text-xl p-1.5 rounded-md ${me.foulardEmoji === e ? 'bg-ft-red' : 'bg-white/5'}`}
-              >
-                {e}
-              </button>
+      {bikes.length > 0 && (
+        <div>
+          <label className="label">Surnom {bikes.length > 1 ? 'des vélos' : 'du vélo'}</label>
+          <div className="space-y-2">
+            {bikes.map((b) => (
+              <div key={b.number} className="flex items-center gap-2">
+                <NumberPlate number={b.number} color={draft.foulardColor} className="text-lg" />
+                <input
+                  value={draft.bikes[b.number] ?? ''} maxLength={40}
+                  onChange={(e) => set({ bikes: { ...draft.bikes, [b.number]: e.target.value } })}
+                  placeholder={`ex : La Fusée`} className="input py-2.5"
+                />
+              </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Catalogue + prix visibles par tous — seul l'achat exige le PIN de l'équipe. */}
-      <div className="card p-5 mt-4">
-        <p className="font-mono-race font-bold text-sm mb-1">🏪 Marketplace</p>
-        {!me && <p className="text-white/40 text-xs mb-3">Déverrouille ta page ci-dessus pour pouvoir acheter.</p>}
-        {purchaseMsg && <p className="text-sm mb-3">{purchaseMsg}</p>}
-        <div className="space-y-3">
-          {items.map((item) => (
-            <MarketItemRow
-              key={item.id}
-              item={item}
-              others={others.filter((o) => o.slug !== slug)}
-              locked={!me}
-              onBuy={handlePurchase}
-            />
-          ))}
-          {items.length === 0 && <p className="text-white/40 text-sm">Aucun item disponible pour l'instant.</p>}
-        </div>
-      </div>
-    </main>
-  )
-}
-
-function MarketItemRow({
-  item, others, locked, onBuy,
-}: { item: MarketItem; others: OtherTeam[]; locked: boolean; onBuy: (item: MarketItem, targetTeamId?: string) => void }) {
-  const [target, setTarget] = useState('')
-  return (
-    <div className="bg-ft-carbon rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
-      <div>
-        <p className="font-mono-race font-bold text-sm">{item.name}</p>
-        {item.description && <p className="text-white/40 text-xs">{item.description}</p>}
-        <p className="text-ft-gold text-xs font-mono-race font-bold">{item.costPoints} pts</p>
-      </div>
-      <div className="flex items-center gap-2">
-        {!locked && item.type === 'MALUS_OTHER' && (
-          <select
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            className="bg-ft-panel border border-white/10 rounded-lg px-2 py-1.5 text-sm"
-          >
-            <option value="">Cible...</option>
-            {others.map((o) => (
-              <option key={o.id} value={o.id}>{o.foulardEmoji} {o.foulardName || o.unitName}</option>
-            ))}
-          </select>
-        )}
-        <button
-          onClick={() => onBuy(item, target || undefined)}
-          disabled={locked || (item.type === 'MALUS_OTHER' && !target)}
-          className="bg-ft-red text-white font-mono-race font-bold text-sm px-3 py-1.5 rounded-lg disabled:opacity-40"
-        >
-          {locked ? '🔒 Acheter' : 'Acheter'}
-        </button>
-      </div>
+      <button onClick={onCancel} className="text-xs text-white/40">Fermer sans enregistrer</button>
     </div>
   )
 }

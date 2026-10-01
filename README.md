@@ -1,6 +1,6 @@
 # Ferme Trophy 2026 🏁
 
-Plateforme complète pour la course de vélo "Ferme Trophy 2026" à Embourg (thème Formule 1) — remplace la gestion papier/Excel : génération des équipes, dossards, ingestion chronométrage, système de points de mini-jeux, marketplace de bonus/malus, classements live, pages équipe avec QR code.
+Plateforme pour la course de vélo "Ferme Trophy 2026" à Embourg (thème Formule 1) — remplace la gestion papier/Excel : génération des équipes, dossards, ingestion chronométrage, système de points de mini-jeux, marketplace de bonus/malus, classements live, pages équipe avec QR code.
 
 ## Stack
 - **Next.js 14** (App Router) + TypeScript
@@ -21,14 +21,20 @@ docker compose exec web npx tsx prisma/seed.ts   # scénario de démo rejouable
 
 ## Modèle d'accès (3 rôles)
 - **Comité** (`AdminUser`) : email + mot de passe. Vue globale, création des comptes organisateurs, correction manuelle des points/tours.
-- **Organisateur de mini-jeu** (`Organizer`) : nom + PIN, **compte créé par le comité** (`/admin/organisateurs`) — pas de self-service (retiré suite à un risque de triche identifié : n'importe qui pouvait sinon se créer un accès et créditer des points). Peut : créditer des points, éditer les prix marketplace, créer une équipe et l'associer à un/des dossard(s) (`/organisateur/equipes`).
-- **Équipe** (`Team`, = une section scoute) : PIN à 5 chiffres **retrouvable à tout moment par le comité/les organisateurs** (`GET /api/teams`, stocké en clair — voir AGENTS.md pour le pourquoi). Pas de compte. Créée **vierge** par un organisateur ou le comité ; c'est l'équipe qui se personnalise elle-même (nom d'unité, nom de section, foulard) via sa page publique `/equipe/{slug}`, déverrouillée par PIN pour éditer et acheter en marketplace. **Une équipe peut avoir plusieurs dossards** (plusieurs vélos) — les tours de tous ses dossards sont additionnés au classement.
+- **Organisateur de mini-jeu** (`Organizer`) : nom + PIN, **compte créé par le comité** (`/admin/organisateurs`) — pas de self-service (retiré suite à un risque de triche identifié : n'importe qui pouvait sinon se créer un accès et créditer des points). Peut (direction de course, `/organisateur`) : créditer des points, **dépenser les points de n'importe quelle écurie** en bonus/malus à sa demande, éditer les prix, inscrire des écuries et leurs dossards.
+- **Équipe** (`Team`, = une section scoute) : PIN à 5 chiffres **retrouvable à tout moment par le comité/les organisateurs** (`GET /api/teams`, stocké en clair — voir AGENTS.md pour le pourquoi). Pas de compte. Inscrite par la direction de course ; l'écurie se personnalise elle-même (nom, unité, section, couleur, emoji, surnom des vélos) via `/equipe/{slug}` déverrouillée par PIN. Le PIN ne permet PAS de dépenser des points. **Une écurie peut avoir plusieurs vélos** : le classement course est par vélo, les points par écurie.
 
-## Adaptateur de chronométrage
-Interface `TimingAdapter` (`src/lib/timing/adapter.ts`) — le reste du système ne consomme que des `RaceLapEvent` normalisés. `MockTimingAdapter` tourne en tâche de fond (process séparé dans le même conteneur, `scripts/timing-daemon.ts`) et simule des passages tant que les specs O'Top ne sont pas connues. **Brancher O'Top = implémenter la même interface, rien d'autre ne change.**
+## Les 3 interfaces
+- **`/ecran`** — grand écran TV : classement par vélo, points par écurie, radio course, annonces bonus/malus.
+- **`/organisateur`** — direction de course : points des mini-jeux, achats bonus/malus pour le compte d'une écurie, inscriptions, historique avec annulation.
+- **`/`** — participants (téléphone) : live, « mon écurie », boutique, radio ; `/equipe/{slug}` pour personnaliser son écurie avec le PIN.
+Plus `/admin` pour le comité (chrono, horloge, check-list jour J...).
 
-## Points ouverts (voir le handover original)
-Format CSV d'inscription, specs O'Top, catalogue marketplace définitif, validation commissaire ou application immédiate des achats (actuellement : immédiate), anti-abus sur les malus, sort des points non dépensés en fin de course.
+## Chronométrage (O'Top / RaceResult)
+Toutes les sources passent par `ingestRecords()` (`src/lib/timing/ingest.ts`) avec un parseur tolérant (JSON/CSV/texte/formulaire). Push : Exporter HTTP RaceResult → `/api/timing/push/<jeton>`. Poll : URL RaceResult interrogée par le daemon. Mode, URL, mapping des colonnes : tout se règle à chaud dans `/admin/chrono` (banc d'essai inclus). Détails dans `AGENTS.md`.
+
+## Points ouverts
+Specs exactes O'Top (push ou poll, passages ou compteurs), catalogue marketplace définitif, anti-abus sur les malus, sort des points non dépensés en fin de course.
 
 ## Déployé sur
 https://ft.lambi-house.be

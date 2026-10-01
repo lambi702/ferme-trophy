@@ -1,19 +1,12 @@
 'use client'
 
-import AdminGate from '@/components/AdminGate'
-import AdminNav from '@/components/AdminNav'
-import TeamsAndDossardsManager from '@/components/TeamsAndDossardsManager'
+import AdminShell from '@/components/AdminShell'
+import EcuriesManager from '@/components/staff/EcuriesManager'
 
-export default function EquipesPage() {
+export default function AdminEquipesPage() {
   return (
-    <AdminGate>
-      {() => (
-        <main className="min-h-screen px-4 py-8 max-w-3xl mx-auto">
-          <AdminNav />
-          <h1 className="font-mono-race text-2xl font-bold mb-6">🏎️ Équipes & dossards</h1>
-          <TeamsAndDossardsManager showQrLink />
-        </main>
-      )}
-    </AdminGate>
+    <AdminShell title="Écuries & dossards" subtitle="Inscriptions, PIN, vélos, export pour le chronométreur.">
+      {({ toast }) => <EcuriesManager toast={toast} />}
+    </AdminShell>
   )
 }

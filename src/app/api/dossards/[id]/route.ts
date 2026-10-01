@@ -1,35 +1,26 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { jsonError, requireAdmin, requireOrganizer } from '@/lib/api-helpers'
+import { jsonError, requireStaff } from '@/lib/api-helpers'
+import { invalidateLive } from '@/lib/live'
 
-// Associe (ou retire) un dossard à une équipe — une équipe peut avoir
-// plusieurs dossards (plusieurs vélos), donc pas de contrainte d'unicité
-// côté équipe, juste un dossard ne peut appartenir qu'à UNE équipe à la fois.
+// Associe (ou retire) un dossard à une écurie, ou le renomme.
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const admin = await requireAdmin(req)
-  const organizer = admin ? null : await requireOrganizer(req)
-  if (!admin && !organizer) return jsonError('Non autorisé', 403)
-
-  const { teamId } = await req.json()
-
-  if (teamId) {
-    const team = await prisma.team.findUnique({ where: { id: teamId } })
-    if (!team) return jsonError('Équipe introuvable', 404)
+  if (!(await requireStaff(req))) return jsonError('Non autorisé', 403)
+  const body = await req.json()
+  const data: { teamId?: string | null; name?: string } = {}
+  if (body.teamId !== undefined) {
+    if (body.teamId && !(await prisma.team.findUnique({ where: { id: String(body.teamId) } }))) return jsonError('Écurie introuvable', 404)
+    data.teamId = body.teamId ? String(body.teamId) : null
   }
-
-  const dossard = await prisma.dossard.update({
-    where: { id: params.id },
-    data: { teamId: teamId || null },
-    include: { team: { select: { id: true, unitName: true, sectionName: true } } },
-  })
+  if (typeof body.name === 'string') data.name = body.name.trim().slice(0, 40)
+  const dossard = await prisma.dossard.update({ where: { id: params.id }, data })
+  invalidateLive()
   return NextResponse.json(dossard)
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const admin = await requireAdmin(req)
-  const organizer = admin ? null : await requireOrganizer(req)
-  if (!admin && !organizer) return jsonError('Non autorisé', 403)
-
+  if (!(await requireStaff(req))) return jsonError('Non autorisé', 403)
   await prisma.dossard.delete({ where: { id: params.id } })
+  invalidateLive()
   return NextResponse.json({ ok: true })
 }

@@ -1,87 +1,89 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import AdminGate from '@/components/AdminGate'
-import AdminNav from '@/components/AdminNav'
+import { useCallback, useEffect, useState } from 'react'
+import AdminShell from '@/components/AdminShell'
+import { api } from '@/components/ui'
 
 type Organizer = { id: string; displayName: string; createdAt: string }
-type CreatedOrganizer = { displayName: string; pin: string }
+type Created = { displayName: string; pin: string }
+type Toast = (msg: string, kind?: 'ok' | 'error') => void
 
 export default function OrganisateursPage() {
+  return (
+    <AdminShell title="Organisateurs" subtitle="Seul le comité crée ces accès (pas d'auto-inscription : sinon n'importe qui pourrait se créditer des points).">
+      {({ toast }) => <Organizers toast={toast} />}
+    </AdminShell>
+  )
+}
+
+function Organizers({ toast }: { toast: Toast }) {
   const [organizers, setOrganizers] = useState<Organizer[]>([])
   const [namesText, setNamesText] = useState('')
-  const [error, setError] = useState('')
-  const [created, setCreated] = useState<CreatedOrganizer[] | null>(null)
+  const [created, setCreated] = useState<Created[] | null>(null)
 
-  const load = () => fetch('/api/organizers').then((r) => r.json()).then(setOrganizers)
-  useEffect(() => { load() }, [])
+  const load = useCallback(async () => {
+    const { ok, data } = await api<Organizer[]>('/api/organizers')
+    if (ok) setOrganizers(data)
+  }, [])
+  useEffect(() => { load() }, [load])
 
-  const handleCreate = async () => {
-    setError('')
+  const create = async () => {
     const displayNames = namesText.split('\n').map((s) => s.trim()).filter(Boolean)
     if (displayNames.length === 0) return
-    const res = await fetch('/api/organizers', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ displayNames }),
-    })
-    const body = await res.json()
-    if (!res.ok) return setError(body.error)
-    setCreated(body.organizers)
+    const { ok, data } = await api<{ organizers: Created[] }>('/api/organizers', 'POST', { displayNames })
+    if (!ok) return toast(data.error ?? 'Erreur', 'error')
+    setCreated(data.organizers)
     setNamesText('')
+    load()
+  }
+  const resetPin = async (o: Organizer) => {
+    if (!window.confirm(`Générer un nouveau PIN pour ${o.displayName} ? L'ancien ne marchera plus.`)) return
+    const { ok, data } = await api<Created>(`/api/organizers/${o.id}`, 'PATCH')
+    if (!ok) return toast(data.error ?? 'Erreur', 'error')
+    setCreated([data])
+  }
+  const remove = async (o: Organizer) => {
+    if (!window.confirm(`Supprimer l'accès de ${o.displayName} ? (son historique reste)`)) return
+    await api(`/api/organizers/${o.id}`, 'DELETE')
     load()
   }
 
   return (
-    <AdminGate>
-      {() => (
-        <main className="min-h-screen px-4 py-8 max-w-2xl mx-auto">
-          <AdminNav />
-          <h1 className="font-mono-race text-2xl font-bold mb-2">🎮 Organisateurs de mini-jeux</h1>
-          <p className="text-white/40 text-sm mb-6">
-            Seul le comité peut créer ces comptes — évite que n&apos;importe qui s&apos;auto-inscrive et crédite des points (triche).
-          </p>
+    <div className="space-y-5">
+      <section className="card space-y-3 p-4">
+        <h2 className="font-mono-race text-xl">Créer des accès</h2>
+        <textarea value={namesText} onChange={(e) => setNamesText(e.target.value)} rows={4} placeholder={'Un prénom par ligne\nJulie\nMarc'} className="input font-mono text-sm" />
+        <button onClick={create} disabled={!namesText.trim()} className="btn-red px-4 py-2 text-sm">Créer</button>
+      </section>
 
-          <div className="card p-5 mb-6">
-            <p className="font-mono-race font-bold text-sm mb-2">Créer des accès</p>
-            <p className="text-white/40 text-xs mb-3">Un nom par ligne.</p>
-            <textarea
-              value={namesText} onChange={(e) => setNamesText(e.target.value)}
-              rows={4} placeholder={'Julie\nMarc\nSophie'}
-              className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2 mb-3 font-mono text-sm"
-            />
-            {error && <p className="text-ft-red2 text-sm mb-2">{error}</p>}
-            <button onClick={handleCreate} className="bg-ft-red text-white font-mono-race font-bold px-4 py-2 rounded-lg text-sm">
-              Créer
-            </button>
+      {created && (
+        <section className="card slide-up border-ft-gold/50 p-4">
+          <p className="mb-2 font-mono-race text-lg">🔑 PIN à distribuer (affichés une seule fois)</p>
+          <div className="space-y-1">
+            {created.map((o) => (
+              <div key={o.displayName} className="flex items-center justify-between rounded-lg bg-white/[0.04] px-3 py-2">
+                <span className="font-bold">{o.displayName}</span>
+                <span className="font-mono-race text-2xl tracking-[0.3em] text-ft-gold">{o.pin}</span>
+              </div>
+            ))}
           </div>
-
-          {created && (
-            <div className="card p-5 mb-6 border-ft-gold" style={{ borderWidth: 2 }}>
-              <p className="font-mono-race font-bold text-sm mb-2">✅ PIN à distribuer (affichés une seule fois) :</p>
-              <table className="w-full text-sm">
-                <tbody className="font-mono">
-                  {created.map((o) => (
-                    <tr key={o.displayName} className="border-t border-white/10">
-                      <td className="pr-4 py-1.5">{o.displayName}</td>
-                      <td className="py-1.5 font-bold text-ft-gold">{o.pin}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="card p-5">
-            <p className="font-mono-race font-bold text-sm mb-3">Comptes existants ({organizers.length})</p>
-            <div className="space-y-1">
-              {organizers.map((o) => (
-                <p key={o.id} className="text-sm font-mono-race">{o.displayName}</p>
-              ))}
-              {organizers.length === 0 && <p className="text-white/40 text-sm">Aucun organisateur créé.</p>}
-            </div>
-          </div>
-        </main>
+          <p className="mt-2 text-xs text-white/40">Connexion sur {typeof window !== 'undefined' ? window.location.host : ''}/organisateur avec le prénom exact + le PIN.</p>
+        </section>
       )}
-    </AdminGate>
+
+      <section className="card p-4">
+        <h2 className="mb-3 font-mono-race text-xl">Comptes ({organizers.length})</h2>
+        <div className="space-y-1.5">
+          {organizers.map((o) => (
+            <div key={o.id} className="flex items-center gap-2 rounded-lg bg-white/[0.03] px-3 py-2">
+              <span className="flex-1 font-bold">{o.displayName}</span>
+              <button onClick={() => resetPin(o)} className="chip text-xs">Nouveau PIN</button>
+              <button onClick={() => remove(o)} className="chip text-xs text-ft-red2">Supprimer</button>
+            </div>
+          ))}
+          {organizers.length === 0 && <p className="text-sm text-white/40">Aucun organisateur.</p>}
+        </div>
+      </section>
+    </div>
   )
 }

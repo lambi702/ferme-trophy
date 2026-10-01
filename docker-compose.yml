@@ -19,8 +19,6 @@ services:
     environment:
       DATABASE_URL: postgresql://ft:${DB_PASSWORD}@db:5432/ft
       JWT_SECRET: ${JWT_SECRET}
-      MOCK_TIMING_ENABLED: ${MOCK_TIMING_ENABLED:-true}
-      MOCK_TIMING_INTERVAL_MS: ${MOCK_TIMING_INTERVAL_MS:-3000}
       NODE_ENV: production
     depends_on:
       db:

@@ -1,42 +1,36 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { jsonError, requireAdmin, requireOrganizer } from '@/lib/api-helpers'
+import { jsonError, requireStaff } from '@/lib/api-helpers'
+import { invalidateLive } from '@/lib/live'
+import { signedEffect } from '@/lib/catalog'
 
-// Public (visible par tous, PIN équipe pas nécessaire pour consulter le
-// catalogue — seul l'achat est réservé aux équipes déverrouillées) :
-// visiteurs anonymes = items actifs seulement. Comité/organisateurs voient
-// aussi les items désactivés (pour pouvoir les réactiver).
+// Catalogue public (items actifs) ; la direction de course voit aussi les
+// items désactivés pour pouvoir les réactiver.
 export async function GET(req: NextRequest) {
-  const admin = await requireAdmin(req)
-  const organizer = admin ? null : await requireOrganizer(req)
-  const canSeeInactive = Boolean(admin || organizer)
-
+  const staff = await requireStaff(req)
   const items = await prisma.marketplaceItem.findMany({
-    where: canSeeInactive ? {} : { active: true },
-    orderBy: { costPoints: 'asc' },
+    where: staff ? {} : { active: true },
+    orderBy: [{ type: 'asc' }, { costPoints: 'asc' }],
   })
   return NextResponse.json(items)
 }
 
-// Édition du catalogue : comité ET organisateurs (les prix doivent rester
-// ajustables sur le terrain le jour J, pas juste par le comité).
+// Édition du catalogue : comité ET organisateurs (prix ajustables sur le terrain).
 export async function POST(req: NextRequest) {
-  const admin = await requireAdmin(req)
-  const organizer = admin ? null : await requireOrganizer(req)
-  if (!admin && !organizer) return jsonError('Non autorisé', 403)
-
+  if (!(await requireStaff(req))) return jsonError('Non autorisé', 403)
   const { name, description, costPoints, type, lapEffect } = await req.json()
-  if (!name || !['BONUS_SELF', 'MALUS_OTHER'].includes(type)) {
-    return jsonError('name et type (BONUS_SELF | MALUS_OTHER) requis')
-  }
+  if (!name || !['BONUS_SELF', 'MALUS_OTHER'].includes(type)) return jsonError('Nom et type (bonus/malus) requis')
+  const cost = Math.trunc(Number(costPoints))
+  if (!Number.isFinite(cost) || cost < 0) return jsonError('Prix invalide')
   const item = await prisma.marketplaceItem.create({
     data: {
-      name: String(name).slice(0, 80),
+      name: String(name).trim().slice(0, 80),
       description: String(description ?? '').slice(0, 240),
-      costPoints: Number(costPoints) || 0,
+      costPoints: cost,
       type,
-      lapEffect: Number(lapEffect) || (type === 'BONUS_SELF' ? 1 : -1),
+      lapEffect: signedEffect(type, lapEffect),
     },
   })
+  invalidateLive()
   return NextResponse.json(item)
 }

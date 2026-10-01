@@ -1,39 +1,43 @@
 /**
- * Process séparé, tourne en tâche de fond dans le même conteneur que
- * l'app Next.js (voir Dockerfile). Ingeste les passages du TimingAdapter
- * actif et les persiste en RaceLapEvent, normalisés, quelle que soit la
- * source réelle derrière l'interface.
+ * Process séparé, lancé en tâche de fond dans le même conteneur que Next.js
+ * (voir docker-entrypoint.sh). Superviseur : relit la config chrono en base
+ * toutes les 5 s (table Setting, modifiable depuis /admin/chrono) et démarre
+ * / arrête l'adaptateur correspondant — off, simulation, ou poll RaceResult.
  *
- * Pour brancher O'Top : remplacer l'import de MockTimingAdapter par le
- * futur OTopAdapter (même interface), rien d'autre à changer ici.
+ * Le push RaceResult (Exporter HTTP) n'a pas besoin du daemon : il arrive
+ * directement sur la route /api/timing/push/<token>.
  */
-import { prisma } from '../src/lib/prisma'
+import { getTimingConfig } from '../src/lib/settings'
+import type { TimingAdapter } from '../src/lib/timing/adapter'
 import { MockTimingAdapter } from '../src/lib/timing/mockAdapter'
+import { RaceResultPollAdapter } from '../src/lib/timing/raceResultPoll'
 
-const enabled = process.env.MOCK_TIMING_ENABLED !== 'false'
+let current: { key: string; adapter: TimingAdapter | null } = { key: '', adapter: null }
 
-if (!enabled) {
-  console.log('[timing-daemon] MOCK_TIMING_ENABLED=false — daemon inactif.')
-} else {
-  const adapter = new MockTimingAdapter(Number(process.env.MOCK_TIMING_INTERVAL_MS ?? 3000))
-  console.log(`[timing-daemon] démarrage avec l'adaptateur "${adapter.name}"`)
+async function supervise() {
+  try {
+    const cfg = await getTimingConfig()
+    const key = cfg.mode === 'poll'
+      ? JSON.stringify(['poll', cfg.pollUrl, cfg.pollIntervalSec, cfg.dataMode, cfg.minLapSeconds, cfg.bibField, cfg.lapsField, cfg.timeField, cfg.idField])
+      : cfg.mode === 'mock' ? `mock:${cfg.mockIntervalMs}` : 'off'
+    if (key === current.key) return
 
-  adapter.start(async (event) => {
-    try {
-      await prisma.raceLapEvent.create({
-        data: {
-          dossardNumber: event.dossardNumber,
-          timestamp: event.timestamp,
-          source: adapter.name,
-        },
-      })
-    } catch (err) {
-      console.error('[timing-daemon] erreur insertion RaceLapEvent', err)
-    }
-  })
-
-  process.on('SIGTERM', () => {
-    adapter.stop()
-    process.exit(0)
-  })
+    current.adapter?.stop()
+    let adapter: TimingAdapter | null = null
+    if (cfg.mode === 'mock') adapter = new MockTimingAdapter(cfg.mockIntervalMs)
+    if (cfg.mode === 'poll' && cfg.pollUrl) adapter = new RaceResultPollAdapter(cfg)
+    adapter?.start()
+    current = { key, adapter }
+    console.log(`[timing-daemon] mode = ${cfg.mode}${adapter ? ` (adaptateur "${adapter.name}")` : ''}`)
+  } catch (err) {
+    console.error('[timing-daemon] erreur de supervision', err)
+  }
 }
+
+supervise()
+setInterval(supervise, 5000)
+
+process.on('SIGTERM', () => {
+  current.adapter?.stop()
+  process.exit(0)
+})

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { signSession, verifyPin, COOKIE_NAMES } from '@/lib/auth'
-import { jsonError } from '@/lib/api-helpers'
+import { jsonError, recordFailure, tooManyFailures } from '@/lib/api-helpers'
 
 /**
  * Vérification uniquement — PAS d'auto-création. Les comptes organisateur
@@ -11,6 +11,7 @@ import { jsonError } from '@/lib/api-helpers'
  * d'origine ("self-service") suite à un retour explicite du comité.
  */
 export async function POST(req: NextRequest) {
+  if (tooManyFailures(req, 'org-login')) return jsonError('Trop d\'essais ratés — réessaie dans quelques minutes', 429)
   const { displayName, pin } = await req.json()
   const name = String(displayName ?? '').trim()
   const pinStr = String(pin ?? '').trim()
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
 
   const organizer = await prisma.organizer.findFirst({ where: { displayName: name } })
   if (!organizer || !(await verifyPin(pinStr, organizer.pinHash))) {
+    recordFailure(req, 'org-login')
     return jsonError('Compte introuvable ou PIN incorrect — demande au comité de te créer un accès.', 401)
   }
 

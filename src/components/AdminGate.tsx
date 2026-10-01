@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { api } from '@/components/ui'
 
 type Admin = { id: string; email: string; displayName: string }
 
@@ -12,8 +13,8 @@ export default function AdminGate({ children }: { children: (admin: Admin) => Re
   const [error, setError] = useState('')
 
   useEffect(() => {
-    fetch('/api/admin/me').then(async (r) => {
-      setAdmin(r.ok ? await r.json() : null)
+    api<Admin>('/api/admin/me').then(({ ok, data }) => {
+      setAdmin(ok ? data : null)
       setChecking(false)
     })
   }, [])
@@ -21,34 +22,31 @@ export default function AdminGate({ children }: { children: (admin: Admin) => Re
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    const res = await fetch('/api/admin/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    })
-    const body = await res.json()
-    if (!res.ok) return setError(body.error)
-    setAdmin(body)
+    const { ok, data } = await api<Admin>('/api/admin/login', 'POST', { email, password })
+    if (!ok) return setError(data.error ?? 'Erreur')
+    setAdmin(data)
   }
 
-  if (checking) return <main className="min-h-screen flex items-center justify-center text-white/40">Chargement...</main>
+  if (checking) return <main className="flex min-h-screen items-center justify-center text-white/40">Chargement…</main>
 
   if (!admin) {
     return (
-      <main className="min-h-screen flex items-center justify-center px-4">
-        <form onSubmit={handleLogin} className="card p-6 w-full max-w-sm space-y-3">
-          <p className="font-mono-race font-bold text-lg mb-1">🛠️ Comité d'organisation</p>
-          <input
-            value={email} onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email" type="email"
-            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2"
-          />
-          <input
-            value={password} onChange={(e) => setPassword(e.target.value)}
-            placeholder="Mot de passe" type="password"
-            className="w-full bg-ft-carbon border border-white/10 rounded-lg px-3 py-2"
-          />
-          {error && <p className="text-ft-red2 text-sm">{error}</p>}
-          <button className="w-full bg-ft-red text-white font-mono-race font-bold py-2.5 rounded-lg">Se connecter</button>
+      <main className="flex min-h-screen items-center justify-center px-4">
+        <form onSubmit={handleLogin} className="card w-full max-w-sm space-y-4 p-6">
+          <div>
+            <p className="text-3xl">🛠️</p>
+            <h1 className="mt-1 font-mono-race text-2xl">Comité d&apos;organisation</h1>
+          </div>
+          <div>
+            <label className="label">Email</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="username" className="input" />
+          </div>
+          <div>
+            <label className="label">Mot de passe</label>
+            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" className="input" />
+          </div>
+          {error && <p className="text-sm text-ft-red2">{error}</p>}
+          <button className="btn-red w-full">Se connecter</button>
         </form>
       </main>
     )
