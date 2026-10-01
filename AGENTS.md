@@ -80,8 +80,10 @@ Purge et régénère TOUT, y compris les comptes comité (identifiants de démo 
 ## Remise à zéro du 2026-10-01
 Toutes les données de démo ont été effacées pour les vraies inscriptions (712k faux tours de la simulation, 46 écuries de test, comptes organisateurs de démo au PIN 1234, compte comité de démo `comite@fermetrophy.be` dont le mot de passe était dans le seed). Conservés : le compte comité de l'utilisateur, le catalogue. Sauvegarde avant reset : `/root/backups/ft-2026-10-01-1637-avant-reset.dump` (`pg_restore`).
 
-## Secrets
-`.env` (jamais commité, voir `.env.example`) : `DB_PASSWORD`, `JWT_SECRET`. Comité et organisateurs de démo créés par `prisma/seed.ts`, pas par variables d'env (contrairement aux deux autres sites).
+## Secrets / comptes
+`.env` (jamais commité, voir `.env.example`) : `DB_PASSWORD`, `JWT_SECRET`.
+- **Comptes comité** : page `/admin/comite` (un membre du comité en ajoute un autre ; mot de passe GÉNÉRÉ et affiché une seule fois, réinitialisable ; chacun change le sien sur la même page ; impossible de se supprimer soi-même ou de supprimer le dernier compte). Le script `scripts/create-admin.ts` (saisie masquée en terminal) reste le secours si plus personne ne peut se connecter.
+- **Comptes organisateurs** : `/admin/organisateurs` (PIN 4 chiffres généré).
 
 ## ⚠️ Feedback
 Ce projet n'a pas (encore) de page feedback in-app comme dour-crew/les-potes. Si le comité fait des retours par un autre canal (email, oral), les noter explicitement plutôt que de les laisser filer — pas de mécanisme automatique ici pour l'instant.

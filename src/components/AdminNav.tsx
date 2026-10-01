@@ -11,6 +11,7 @@ const LINKS = [
   { href: '/admin/points', label: '📜 Historique' },
   { href: '/admin/marketplace', label: '🛒 Catalogue' },
   { href: '/admin/organisateurs', label: '🎮 Organisateurs' },
+  { href: '/admin/comite', label: '🛠️ Comité' },
 ]
 
 export default function AdminNav() {
@@ -32,7 +33,7 @@ export default function AdminNav() {
           <button onClick={logout} className="hover:text-white">Déconnexion</button>
         </div>
       </div>
-      <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1">
+      <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
         {LINKS.map((l) => (
           <Link
             key={l.href}

@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from 'jose'
 import bcrypt from 'bcryptjs'
+import { randomInt } from 'node:crypto'
 import type { NextRequest } from 'next/server'
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET ?? 'dev-secret-change-me')
@@ -58,4 +59,11 @@ export function slugify(input: string): string {
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '')
+}
+
+/** Mot de passe lisible à dicter/recopier (sans 0/O, 1/l/i) : "abcd-efgh-jkmn". */
+export function generatePassword(): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789'
+  const group = () => Array.from({ length: 4 }, () => alphabet[randomInt(alphabet.length)]).join('')
+  return `${group()}-${group()}-${group()}`
 }
