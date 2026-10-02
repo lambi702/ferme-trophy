@@ -161,7 +161,10 @@ function Tower({ bikes }: { bikes: LiveBike[] }) {
           {n} vélos en piste
         </p>
       </div>
-      <div ref={ref} key={pages > 1 ? `p${current}` : 'all'} className={`relative min-h-0 flex-1 ${pages > 1 ? 'slide-up' : ''}`}>
+      {/* Le conteneur mesuré reste STABLE (sinon l'observer mesure un nœud détaché → 0 px) ;
+          seul le calque intérieur est recréé à chaque page pour l'animation. */}
+      <div ref={ref} className="relative min-h-0 flex-1">
+        <div key={pages > 1 ? `p${current}` : 'all'} className={`absolute inset-0 ${pages > 1 ? 'slide-up' : ''}`}>
         {n === 0 && (
           <p className="flex h-full items-center justify-center font-mono-race text-white/30" style={{ fontSize: '3.5vh' }}>En attente des inscriptions…</p>
         )}
@@ -183,6 +186,7 @@ function Tower({ bikes }: { bikes: LiveBike[] }) {
             />
           )
         })}
+      </div>
       </div>
     </section>
   )
