@@ -179,6 +179,13 @@ function MyTeamCard({ team, bikes, onForget, onPickFromList }: { team: LiveTeam 
 function CourseTab({ data, mySlug }: { data: LiveState; mySlug: string | null }) {
   const anim = useRaceAnimations(data.bikes)
   const now = useNow(5000)
+  const [query, setQuery] = useState('')
+  const [onlyMine, setOnlyMine] = useState(false)
+  const q = query.trim().toLowerCase()
+  const shown = data.bikes.filter((b) =>
+    (!onlyMine || b.teamSlug === mySlug) &&
+    (!q || String(b.number) === q.replace('#', '') || `${b.name} ${b.teamName}`.toLowerCase().includes(q)),
+  )
   if (data.bikes.length === 0) return <Empty icon="🏎️" title="Aucun vélo inscrit pour l'instant" hint="Le classement apparaîtra dès que les écuries auront reçu leurs dossards." />
   const leader = data.bikes[0]
 
@@ -200,8 +207,22 @@ function CourseTab({ data, mySlug }: { data: LiveState; mySlug: string | null })
         </div>
       )}
 
+      {data.bikes.length > 12 && (
+        <div className="mb-3 flex gap-2">
+          <input
+            value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="🔎 N° de dossard ou écurie" inputMode="search"
+            className="input py-2.5"
+          />
+          {mySlug && (
+            <button onClick={() => setOnlyMine(!onlyMine)} className={`chip shrink-0 ${onlyMine ? 'chip-on' : ''}`}>⭐ Les miens</button>
+          )}
+        </div>
+      )}
+
       <ol className="space-y-1.5">
-        {data.bikes.map((b) => {
+        {shown.length === 0 && <li className="card p-4 text-center text-sm text-white/45">Aucun vélo ne correspond.</li>}
+        {shown.map((b) => {
           const mine = b.teamSlug === mySlug
           const move = anim.move(b.number)
           return (

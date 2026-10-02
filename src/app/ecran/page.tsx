@@ -126,9 +126,22 @@ function Tower({ bikes }: { bikes: LiveBike[] }) {
     return () => ro.disconnect()
   }, [])
 
+  // Lisibilité TV : jamais plus de 18 lignes par colonne ni plus de 2 colonnes.
+  // Au-delà de 36 vélos → pages de 36 qui défilent (le leader est toujours en page 1).
+  const ROWS = 18
+  const PAGE = ROWS * 2
   const n = bikes.length
-  const cols = n <= 18 ? 1 : n <= 38 ? 2 : 3
-  const perCol = Math.max(1, Math.ceil(n / cols))
+  const pages = Math.max(1, Math.ceil(n / PAGE))
+  const [page, setPage] = useState(0)
+  useEffect(() => {
+    if (pages <= 1) return setPage(0)
+    const t = setInterval(() => setPage((p) => (p + 1) % pages), 12000)
+    return () => clearInterval(t)
+  }, [pages])
+  const current = Math.min(page, pages - 1)
+  const shown = pages > 1 ? bikes.slice(current * PAGE, current * PAGE + PAGE) : bikes
+  const cols = n <= ROWS ? 1 : 2
+  const perCol = pages > 1 ? ROWS : Math.max(1, Math.ceil(n / cols))
   const gap = Math.max(3, size.h * 0.006)
   const rowH = size.h > 0 ? Math.min(size.h / perCol, size.h / 7) : 0
   const colW = size.w > 0 ? (size.w - (cols - 1) * gap * 3) / cols : 0
@@ -139,13 +152,20 @@ function Tower({ bikes }: { bikes: LiveBike[] }) {
         <h2 className="font-mono-race tracking-wide" style={{ fontSize: '3vh' }}>
           <span className="text-ft-red">▌</span>CLASSEMENT COURSE
         </h2>
-        <p className="font-bold uppercase tracking-[0.2em] text-white/40" style={{ fontSize: '1.5vh' }}>{n} vélos en piste</p>
+        <p className="font-bold uppercase tracking-[0.2em] text-white/40" style={{ fontSize: '1.5vh' }}>
+          {pages > 1 && (
+            <span className="text-white/70">
+              positions {current * PAGE + 1}–{Math.min(n, (current + 1) * PAGE)} · page {current + 1}/{pages} ·{' '}
+            </span>
+          )}
+          {n} vélos en piste
+        </p>
       </div>
-      <div ref={ref} className="relative min-h-0 flex-1">
+      <div ref={ref} key={pages > 1 ? `p${current}` : 'all'} className={`relative min-h-0 flex-1 ${pages > 1 ? 'slide-up' : ''}`}>
         {n === 0 && (
           <p className="flex h-full items-center justify-center font-mono-race text-white/30" style={{ fontSize: '3.5vh' }}>En attente des inscriptions…</p>
         )}
-        {rowH > 0 && bikes.map((b, i) => {
+        {rowH > 0 && shown.map((b, i) => {
           const col = Math.floor(i / perCol)
           const row = i % perCol
           return (
