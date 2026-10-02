@@ -77,6 +77,9 @@ docker compose exec web npx tsx prisma/seed.ts
 ```
 Purge et régénère TOUT, y compris les comptes comité (identifiants de démo publics dans le seed). **Ne plus lancer en prod** depuis la remise à zéro du 2026-10-01 (vraies inscriptions). Pour la prod : `/admin/course` → zone dangereuse (« remettre le jeu à zéro » garde écuries/dossards ; « tout effacer » garde comptes, catalogue, réglages) ou `/admin/chrono` → « remettre les tours à zéro » (après les tests O'Top, avant le départ).
 
+## Inscriptions réelles (import du 2026-10-01)
+28 sections importées depuis le fichier du comité (`sections_inscrites.xlsx`), **3 vélos chacune = 84 vélos**. Convention de numérotation : **écurie n°N → dossards N1, N2, N3** (ex. écurie 7 = 71, 72, 73 ; écurie 28 = 281–283) → on lit l'écurie dans le numéro, et un 4e vélo éventuel prend N4 sans renuméroter. Les noms (unité / section / nom d'écurie par défaut type « Embourg Karisimbi ») ont été normalisés à la main depuis les libellés libres du fichier ; chaque écurie peut les changer avec son PIN. Avec plus de 36 vélos, l'écran géant pagine le classement course (36 par page, rotation 12 s).
+
 ## Remise à zéro du 2026-10-01
 Toutes les données de démo ont été effacées pour les vraies inscriptions (712k faux tours de la simulation, 46 écuries de test, comptes organisateurs de démo au PIN 1234, compte comité de démo `comite@fermetrophy.be` dont le mot de passe était dans le seed). Conservés : le compte comité de l'utilisateur, le catalogue. Sauvegarde avant reset : `/root/backups/ft-2026-10-01-1637-avant-reset.dump` (`pg_restore`).
 
