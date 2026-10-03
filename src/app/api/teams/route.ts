@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { jsonError, requireStaff } from '@/lib/api-helpers'
-import { assignDossards, createTeam, parseDossardList } from '@/lib/teams'
+import { assignDossards, createTeam, parseDossardList, parseGroup } from '@/lib/teams'
 import { invalidateLive } from '@/lib/live'
 
 export async function GET(req: NextRequest) {
@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   // Comité ET organisateurs voient le PIN — ils doivent pouvoir le
   // retrouver à tout moment pour le recommuniquer à une écurie.
   const teams = await prisma.team.findMany({
-    include: { dossards: { select: { id: true, number: true, name: true }, orderBy: { number: 'asc' } } },
+    include: { dossards: { select: { id: true, number: true, name: true, transponder: true, contest: true, category: true }, orderBy: { number: 'asc' } } },
     orderBy: { createdAt: 'asc' },
   })
   return NextResponse.json(
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
       sectionName: String(body.sectionName ?? '').trim(),
     })
     if (numbers.length > 0) {
-      const { error } = await assignDossards(team.id, numbers)
+      const { error } = await assignDossards(team.id, numbers, parseGroup(body.group))
       if (error) {
         await prisma.team.delete({ where: { id: team.id } })
         return jsonError(error, 409)

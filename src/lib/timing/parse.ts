@@ -24,11 +24,15 @@
  */
 
 export type ParsedRecord = {
-  bib: number
+  /** Dossard, si le chrono l'envoie. Sinon `chip` (résolu en dossard via Dossard.transponder). */
+  bib?: number
+  chip?: string
   laps?: number
   time?: string
   externalId?: string
   timingPoint?: string
+  /** Tapis/décodeur/boucle qui a lu le passage (sert à fusionner et surveiller 2 tapis côte à côte). */
+  mat?: string
 }
 
 export type FieldMapping = {
@@ -36,7 +40,7 @@ export type FieldMapping = {
   lapsField?: string
   timeField?: string
   idField?: string
-  /** Si renseigné, ignore les enregistrements d'un autre point de chrono (ex : "STARTFINISH"). */
+  /** Si renseigné, ignore les autres points de chrono. Plusieurs possibles : "TAPIS1, TAPIS2". */
   timingPoint?: string
 }
 
@@ -51,8 +55,11 @@ const ALIASES = {
   id: ['id', 'rdid', 'passingid', 'rawdataid', 'pid', 'recordid', 'readid', 'detectionid', 'uid'],
   timingPoint: ['timingpoint', 'rdtimingpoint', 'tp', 'location', 'splitname'],
   invalid: ['invalid', 'isinvalid'],
+  chip: ['transponder', 'rdtransponder', 'transpondeur', 'transpondeur1', 'transponder1', 'chip', 'chipcode', 'chipid', 'transpcode', 'tag', 'tagid'],
+  device: ['devicename', 'rddecodername', 'decodername', 'boxname', 'deviceid', 'rddecoderid', 'decoderid', 'boxid', 'decoder', 'mat', 'tapis'],
+  loop: ['loopid', 'rdloopid', 'loop', 'boucle'],
 }
-const HEADER_WORDS = new Set([...ALIASES.bib, ...ALIASES.laps, ...ALIASES.time, ...ALIASES.id, ...ALIASES.timingPoint])
+const HEADER_WORDS = new Set([...ALIASES.bib, ...ALIASES.laps, ...ALIASES.time, ...ALIASES.id, ...ALIASES.timingPoint, ...ALIASES.chip])
 
 type Row = Record<string, unknown>
 
@@ -103,7 +110,7 @@ function jsonToRows(value: unknown, mapping: FieldMapping): Row[] {
       if (Array.isArray(obj[key])) return jsonToRows(obj[key], mapping)
     }
     const flat = flatten(obj)
-    if (findKey(flat, ALIASES.bib, mapping.bibField) !== undefined) return [flat]
+    if (findKey(flat, ALIASES.bib, mapping.bibField) !== undefined || findKey(flat, ALIASES.chip) !== undefined) return [flat]
     // Enveloppe { "groupe A": [[...]], "groupe B": [[...]] } (listes groupées) → on concatène.
     const arrays = Object.values(obj).filter(Array.isArray) as unknown[][]
     if (arrays.length > 0) return arrays.flatMap((a) => jsonToRows(a, mapping))
@@ -174,10 +181,13 @@ function guessRow(c: string[]): Row {
   // RunScore RSBCI : RSBCI,<dossard>,<hh:mm:ss.kkk>,<point de chrono>
   if (c[0]?.toUpperCase() === 'RSBCI') return { bib: c[1], time: c[2], timingpoint: c[3] }
 
-  // Raw Data Record V1/V2 : <PassingNo>;<Bib/TranspCode>;<Date>;<Time>;... (≥ 15 colonnes)
+  // Raw Data Record V1/V2 : <PassingNo>;<Bib/TranspCode>;<Date>;<Time>;...;<LoopID>(10);...;<BoxName>
+  // BoxName = 17e champ en V2 (20 champs), 16e en V1 (19 champs). Le n° de passage est propre à
+  // chaque décodeur → l'ID inclut le boîtier (sinon 2 tapis pourraient avoir le même n°).
   if (c.length >= 15 && /^\d+$/.test(c[0]) && TIME_LIKE.test(c[3] ?? '')) {
-    const time = c[2] ? `${c[2]} ${c[3]}` : c[3]
-    return { bib: c[1], time: c[3], id: `${c[0]}@${time}` }
+    const box = (c.length >= 20 ? c[16] : c[15]) || ''
+    const loop = c[10] || ''
+    return { bib: c[1], time: c[3], id: `${box}#${c[0]}@${[c[2], c[3]].filter(Boolean).join(' ')}`, boxname: box, loopid: loop }
   }
 
   if (c.length === 1) return { bib: c[0] }
@@ -186,7 +196,11 @@ function guessRow(c: string[]): Row {
   const t = c.findIndex((v, i) => i > 0 && isTimeLike(v))
   if (t > 0) {
     for (let i = t - 1; i >= 0; i--) {
-      if (PURE_INT.test(c[i])) return { bib: c[i], time: c[t] }
+      if (PURE_INT.test(c[i]) || (i === t - 1 && toChip(c[i]))) {
+        // Une colonne texte avant le dossard = le point de chrono ([RD_TimingPoint]).
+        const tp = c.slice(0, i).find((v) => /[a-z]/i.test(v))
+        return { bib: c[i], time: c[t], ...(tp ? { timingpoint: tp } : {}) }
+      }
     }
   }
   // Sinon : dossard en 1re colonne, tours = dernière petite colonne entière (ex : [12,"Nom",5]).
@@ -219,14 +233,20 @@ function rowsToRecords(rows: Row[], mapping: FieldMapping): ParsedRecord[] {
   const out: ParsedRecord[] = []
   for (const row of rows) {
     const bibKey = findKey(row, ALIASES.bib, mapping.bibField)
-    if (!bibKey) continue
-    const bib = toBib(row[bibKey])
-    if (bib === null) continue
+    const bib = bibKey ? toBib(row[bibKey]) : null
+    // Pas de dossard numérique : code puce dans la colonne dossard ("Bib/TranspCode") ou colonne dédiée.
+    let chip: string | undefined
+    if (bib === null) {
+      const rawBib = bibKey ? cell(row[bibKey]) : ''
+      const chipKey = findKey(row, ALIASES.chip)
+      chip = toChip(chipKey ? row[chipKey] : undefined) ?? toChip(rawBib)
+      if (!chip) continue
+    }
 
     const invalidKey = findKey(row, ALIASES.invalid)
     if (invalidKey && (row[invalidKey] === true || String(row[invalidKey]).toLowerCase() === 'true' || row[invalidKey] === 1)) continue
 
-    const rec: ParsedRecord = { bib }
+    const rec: ParsedRecord = bib !== null ? { bib } : { chip }
     const lapsKey = findKey(row, ALIASES.laps, mapping.lapsField)
     if (lapsKey) {
       const laps = toInt(row[lapsKey])
@@ -238,16 +258,30 @@ function rowsToRecords(rows: Row[], mapping: FieldMapping): ParsedRecord[] {
     if (idKey && cell(row[idKey]) !== '') rec.externalId = cell(row[idKey])
     const tpKey = findKey(row, ALIASES.timingPoint)
     if (tpKey && cell(row[tpKey]) !== '') rec.timingPoint = cell(row[tpKey])
+    const devKey = findKey(row, ALIASES.device)
+    const loopKey = findKey(row, ALIASES.loop)
+    const device = devKey ? cell(row[devKey]) : ''
+    const loop = loopKey ? cell(row[loopKey]) : ''
+    const mat = [device, loop && `boucle ${loop}`].filter(Boolean).join(' · ') || rec.timingPoint
+    if (mat) rec.mat = mat
     out.push(rec)
   }
   return out
 }
 
 function finalize(records: ParsedRecord[], mapping: FieldMapping): ParsedRecord[] {
-  const tp = mapping.timingPoint?.trim()
-  if (!tp) return records
-  return records.filter((r) => !r.timingPoint || norm(r.timingPoint) === norm(tp))
+  const wanted = (mapping.timingPoint ?? '').split(',').map(norm).filter(Boolean)
+  if (wanted.length === 0) return records
+  return records.filter((r) => !r.timingPoint || wanted.includes(norm(r.timingPoint)))
 }
+
+/** Code puce plausible (ABEA-1111, ZCMBG52) : lettres ET chiffres, tirets permis. */
+function toChip(v: unknown): string | undefined {
+  const s = cell(v).toUpperCase()
+  return /^[A-Z0-9][A-Z0-9-]{2,23}$/.test(s) && /[A-Z]/.test(s) && /\d/.test(s) ? s : undefined
+}
+
+export const normalizeChip = (v: string) => v.trim().toUpperCase()
 
 /** Dossard = entier PUR (éventuellement "#12"). "ZCMBG52" est un transpondeur, pas le dossard 52. */
 function toBib(v: unknown): number | null {

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { QRCodeSVG } from 'qrcode.react'
 import { NumberPlate, TeamBadge, api } from '@/components/ui'
+import { useLive } from '@/lib/useLive'
+import { categoryName, contestName, groupKey } from '@/lib/live-types'
 
 type StaffTeam = {
   id: string
@@ -14,7 +16,22 @@ type StaffTeam = {
   foulardName: string
   foulardColor: string
   foulardEmoji: string
-  dossards: { id: string; number: number; name: string }[]
+  dossards: { id: string; number: number; name: string; transponder: string | null; contest: number | null; category: number | null }[]
+}
+
+type GroupOption = { key: string; label: string }
+
+/** Classements proposés : ceux qui existent déjà + les 4 du règlement 2026 (parcours 1-2 × catégorie 1-2). */
+function useGroupOptions(): GroupOption[] {
+  const { data } = useLive()
+  const names = data?.contests ?? []
+  const opts = new Map<string, string>()
+  for (const c of names) if (c.contest !== null && c.category !== null) opts.set(c.key, c.name)
+  for (const [ct, cat] of [[1, 1], [1, 2], [2, 1], [2, 2]]) {
+    const key = groupKey(ct, cat)
+    if (!opts.has(key)) opts.set(key, `${contestName({}, ct)} · ${categoryName({}, ct, cat)}`)
+  }
+  return [...opts].map(([key, label]) => ({ key, label })).sort((a, b) => a.key.localeCompare(b.key))
 }
 
 type Toast = (msg: string, kind?: 'ok' | 'error') => void
@@ -25,6 +42,7 @@ type Toast = (msg: string, kind?: 'ok' | 'error') => void
  * liste pour le chronométreur. Partagé entre /organisateur et /admin/equipes.
  */
 export default function EcuriesManager({ toast }: { toast: Toast }) {
+  const groups = useGroupOptions()
   const [teams, setTeams] = useState<StaffTeam[] | null>(null)
   const [query, setQuery] = useState('')
   const [created, setCreated] = useState<StaffTeam | null>(null)
@@ -53,6 +71,7 @@ export default function EcuriesManager({ toast }: { toast: Toast }) {
   return (
     <div className="space-y-5 pb-24">
       <CreateForm
+        groups={groups}
         onCreated={async (slug) => {
           await load()
           const { data } = await api<StaffTeam[]>('/api/teams')
@@ -92,7 +111,7 @@ export default function EcuriesManager({ toast }: { toast: Toast }) {
         </div>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="🔎 Nom, unité, PIN, n° de dossard…" className="input mb-2 py-2.5" />
         <div className="space-y-2">
-          {filtered.map((t) => <TeamRow key={t.id} team={t} reload={load} toast={toast} />)}
+          {filtered.map((t) => <TeamRow key={t.id} team={t} groups={groups} reload={load} toast={toast} />)}
           {teams && teams.length === 0 && <p className="card p-4 text-sm text-white/45">Aucune écurie pour l&apos;instant — inscris la première ci-dessus.</p>}
         </div>
       </section>
@@ -100,7 +119,8 @@ export default function EcuriesManager({ toast }: { toast: Toast }) {
   )
 }
 
-function CreateForm({ onCreated, toast }: { onCreated: (slug: string) => void; toast: Toast }) {
+function CreateForm({ groups, onCreated, toast }: { groups: GroupOption[]; onCreated: (slug: string) => void; toast: Toast }) {
+  const [group, setGroup] = useState('')
   const [foulardName, setFoulardName] = useState('')
   const [unitName, setUnitName] = useState('')
   const [sectionName, setSectionName] = useState('')
@@ -110,7 +130,7 @@ function CreateForm({ onCreated, toast }: { onCreated: (slug: string) => void; t
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
-    const { ok, data } = await api<{ teams: { slug: string }[] }>('/api/teams', 'POST', { foulardName, unitName, sectionName, dossards })
+    const { ok, data } = await api<{ teams: { slug: string }[] }>('/api/teams', 'POST', { foulardName, unitName, sectionName, dossards, group })
     setBusy(false)
     if (!ok) return toast(data.error ?? 'Erreur', 'error')
     setFoulardName(''); setUnitName(''); setSectionName(''); setDossards('')
@@ -123,6 +143,13 @@ function CreateForm({ onCreated, toast }: { onCreated: (slug: string) => void; t
       <div>
         <label className="label">Dossard(s) — un par vélo</label>
         <input value={dossards} onChange={(e) => setDossards(e.target.value)} placeholder="ex : 12, 13   ou   20-22" className="input font-mono-race text-lg" inputMode="numeric" />
+      </div>
+      <div>
+        <label className="label">Classement (parcours · catégorie)</label>
+        <select value={group} onChange={(e) => setGroup(e.target.value)} className="input">
+          <option value="">— à préciser —</option>
+          {groups.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+        </select>
       </div>
       <div>
         <label className="label">Nom d&apos;écurie <span className="normal-case tracking-normal text-white/30">(optionnel, modifiable par l&apos;écurie)</span></label>
@@ -143,7 +170,16 @@ function CreateForm({ onCreated, toast }: { onCreated: (slug: string) => void; t
   )
 }
 
-function TeamRow({ team, reload, toast }: { team: StaffTeam; reload: () => void; toast: Toast }) {
+function TeamRow({ team, groups, reload, toast }: { team: StaffTeam; groups: GroupOption[]; reload: () => void; toast: Toast }) {
+  const first = team.dossards.find((d) => d.contest !== null)
+  const currentGroup = first ? groupKey(first.contest, first.category) : ''
+  const groupLabel = groups.find((g) => g.key === currentGroup)?.label
+  const setGroup = async (group: string) => {
+    const { ok, data } = await api(`/api/teams/${team.slug}/dossards`, 'PATCH', { group })
+    if (!ok) return toast(data.error ?? 'Erreur', 'error')
+    toast('Classement mis à jour ✓')
+    reload()
+  }
   const [open, setOpen] = useState(false)
   const [edit, setEdit] = useState({ foulardName: team.foulardName, unitName: team.unitName, sectionName: team.sectionName })
   const [newBike, setNewBike] = useState('')
@@ -189,6 +225,7 @@ function TeamRow({ team, reload, toast }: { team: StaffTeam; reload: () => void;
               {team.dossards.map((d) => <NumberPlate key={d.id} number={d.number} color={team.foulardColor} className="text-xs" />)}
               {team.dossards.length === 0 && <span className="text-xs text-ft-red2">aucun vélo</span>}
               {(team.unitName || team.sectionName) && <span className="truncate text-xs text-white/40">{[team.unitName, team.sectionName].filter(Boolean).join(' · ')}</span>}
+              {team.dossards.length > 0 && !groupLabel && <span className="text-xs text-ft-gold">classement à préciser</span>}
             </span>
           </span>
         </button>
@@ -208,12 +245,21 @@ function TeamRow({ team, reload, toast }: { team: StaffTeam; reload: () => void;
           <button onClick={saveNames} className="btn-ghost w-full py-2 text-sm">Enregistrer les noms</button>
 
           <div>
+            <p className="label">Classement</p>
+            <select value={currentGroup} onChange={(e) => setGroup(e.target.value)} className="input py-2">
+              <option value="">— à préciser —</option>
+              {groups.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+            </select>
+          </div>
+
+          <div>
             <p className="label">Vélos</p>
             <div className="flex flex-wrap gap-1.5">
               {team.dossards.map((d) => (
                 <span key={d.id} className="inline-flex items-center gap-1 rounded-lg bg-white/[0.05] py-1 pl-1 pr-2 text-sm">
                   <NumberPlate number={d.number} color={team.foulardColor} className="text-sm" />
                   {d.name && <span className="text-white/60">{d.name}</span>}
+                  {d.transponder && <span className="font-mono text-[11px] text-white/40">{d.transponder}</span>}
                   <button onClick={() => removeBike(d.number)} className="ml-1 text-white/40 hover:text-ft-red2" aria-label={`Retirer #${d.number}`}>✕</button>
                 </span>
               ))}

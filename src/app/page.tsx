@@ -181,13 +181,21 @@ function CourseTab({ data, mySlug }: { data: LiveState; mySlug: string | null })
   const now = useNow(5000)
   const [query, setQuery] = useState('')
   const [onlyMine, setOnlyMine] = useState(false)
+  // Un classement par (parcours · catégorie) ; par défaut celui de "mon écurie".
+  const myGroup = data.bikes.find((b) => b.teamSlug === mySlug)?.group
+  const [group, setGroup] = useState<string | null>(null)
+  const activeGroup = data.contests.some((c) => c.key === group) ? group : (myGroup ?? data.contests[0]?.key ?? null)
+  const contest = data.contests.find((c) => c.key === activeGroup)
   const q = query.trim().toLowerCase()
+  // Recherche ou "les miens" → tous classements confondus ; sinon le classement choisi.
   const shown = data.bikes.filter((b) =>
+    (q || onlyMine || data.contests.length <= 1 || b.group === activeGroup) &&
     (!onlyMine || b.teamSlug === mySlug) &&
     (!q || String(b.number) === q.replace('#', '') || `${b.name} ${b.teamName}`.toLowerCase().includes(q)),
   )
   if (data.bikes.length === 0) return <Empty icon="🏎️" title="Aucun vélo inscrit pour l'instant" hint="Le classement apparaîtra dès que les écuries auront reçu leurs dossards." />
-  const leader = data.bikes[0]
+  const leader = data.bikes.find((b) => b.group === activeGroup && b.rank === 1)
+  const showGroupLabel = data.contests.length > 1 && (q || onlyMine)
 
   return (
     <section>
@@ -196,12 +204,29 @@ function CourseTab({ data, mySlug }: { data: LiveState; mySlug: string | null })
         <p className="text-xs text-white/40">{plural(data.bikes.length, 'vélo')} · {plural(data.totalLaps, 'tour')} au total</p>
       </div>
 
+      {data.contests.length > 1 && (
+        <div className="mb-3 grid grid-cols-2 gap-1.5">
+          {data.contests.map((c) => (
+            <button
+              key={c.key}
+              onClick={() => { setGroup(c.key); setQuery(''); setOnlyMine(false) }}
+              className={`rounded-xl border px-3 py-2 text-left transition ${c.key === activeGroup && !q && !onlyMine ? 'border-ft-red bg-ft-red/15' : 'border-white/[0.07] bg-[#141417]'}`}
+            >
+              <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-white/45">{c.contestName || 'Course'}</span>
+              <span className="block truncate font-bold leading-tight">
+                {c.categoryName || c.name} {c.key === myGroup && '⭐'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {leader && leader.laps > 0 && (
         <div className="mb-3 flex items-center gap-3 overflow-hidden rounded-2xl border border-ft-gold/30 bg-gradient-to-r from-ft-gold/15 to-transparent p-3">
           <span className="text-2xl">🏆</span>
           <p className="min-w-0 flex-1 truncate text-sm">
             <span className="font-bold">#{leader.number}{leader.name ? ` ${leader.name}` : ''}</span>
-            <span className="text-white/50"> mène pour {leader.teamName}</span>
+            <span className="text-white/50"> mène {contest && data.contests.length > 1 ? `en ${contest.categoryName || contest.name}` : `pour ${leader.teamName}`}</span>
           </p>
           <span className="font-mono-race tnum text-2xl text-ft-gold">{leader.laps}</span>
         </div>
@@ -244,6 +269,7 @@ function CourseTab({ data, mySlug }: { data: LiveState; mySlug: string | null })
                   </p>
                   <p className="truncate text-xs text-white/45">
                     {b.teamEmoji} {b.name ? b.teamName : `Vélo #${b.number}`}
+                    {showGroupLabel && <span> · {data.contests.find((c) => c.key === b.group)?.categoryName}</span>}
                     {b.lastLapAt && <span> · {relTime(b.lastLapAt, now)}</span>}
                   </p>
                 </div>

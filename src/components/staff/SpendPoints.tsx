@@ -23,6 +23,7 @@ export default function SpendPoints({
   const [itemId, setItemId] = useState<string | null>(null)
   const [targetId, setTargetId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [allCourses, setAllCourses] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const payer = teams.find((t) => t.id === payerId) ?? null
@@ -32,10 +33,13 @@ export default function SpendPoints({
 
   const candidates = useMemo(() => {
     if (!payer || !item) return []
-    const pool = item.type === 'BONUS_SELF' ? bikes.filter((b) => b.teamId === payer.id) : bikes.filter((b) => b.teamId !== payer.id)
+    // Malus : par défaut sur les vélos du MÊME parcours (les adversaires réels de l'écurie).
+    const pool = item.type === 'BONUS_SELF'
+      ? bikes.filter((b) => b.teamId === payer.id)
+      : bikes.filter((b) => b.teamId !== payer.id && (allCourses || payer.contest === null || b.contest === payer.contest))
     const q = query.trim().toLowerCase()
     return q ? pool.filter((b) => `${b.number} ${b.name} ${b.teamName}`.toLowerCase().includes(q)) : pool
-  }, [payer, item, bikes, query])
+  }, [payer, item, bikes, query, allCourses])
 
   const pickItem = (i: LiveItem) => {
     setItemId(i.id)
@@ -143,7 +147,16 @@ export default function SpendPoints({
       {step === 3 && item && (
         <section>
           <p className="label">{item.type === 'BONUS_SELF' ? `Quel vélo reçoit ${signed(item.lapEffect)} tour ?` : `Quel vélo adverse prend ${signed(item.lapEffect)} tour ?`}</p>
-          {item.type === 'MALUS_OTHER' && <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="🔎 N° de dossard, écurie…" className="input mb-2 py-2.5" inputMode="search" />}
+          {item.type === 'MALUS_OTHER' && (
+            <div className="mb-2 flex gap-2">
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="🔎 N° de dossard, écurie…" className="input py-2.5" inputMode="search" />
+              {payer?.contest !== null && (
+                <button onClick={() => setAllCourses(!allCourses)} className={`chip shrink-0 text-xs ${allCourses ? 'chip-on' : ''}`}>
+                  {allCourses ? 'Tous parcours' : 'Même parcours'}
+                </button>
+              )}
+            </div>
+          )}
           <div className="space-y-1.5">
             {candidates.map((b) => (
               <button key={b.dossardId} onClick={() => setTargetId(b.dossardId)} className="flex w-full items-center gap-3 rounded-xl border border-white/[0.07] bg-[#141417] p-2.5 text-left transition active:scale-[0.99]">

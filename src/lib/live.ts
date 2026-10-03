@@ -1,6 +1,6 @@
 import { prisma } from './prisma'
 import { getRaceConfig } from './settings'
-import { teamDisplayName, type FeedItem, type LiveBike, type LiveState, type LiveTeam } from './live-types'
+import { categoryName, contestName, groupKey, teamDisplayName, type FeedItem, type LiveBike, type LiveContest, type LiveState, type LiveTeam } from './live-types'
 
 /**
  * État live complet, recalculé à la volée (aucun solde stocké) depuis
@@ -68,24 +68,43 @@ async function computeLiveState(): Promise<LiveState> {
         laps: rawLaps + adjustment,
         rank: 0,
         gap: 0,
+        contest: d.contest,
+        category: d.category,
+        group: groupKey(d.contest, d.category),
         lastLapAt: lap?.last ? lap.last.toISOString() : null,
       })
     }
   }
 
-  // Égalité de tours : devant = celui qui a bouclé ce tour le plus tôt.
+  // Classement PAR ÉPREUVE (contests RaceResult : ex. Guides/Scouts vs Lutins/Louveteaux),
+  // épreuves dans l'ordre (sans épreuve à la fin). Égalité de tours : devant = celui
+  // qui a bouclé ce tour le plus tôt.
+  const contestOrder = (c: number | null) => (c === null ? Number.MAX_SAFE_INTEGER : c)
   bikes.sort((a, b) => {
+    if (a.contest !== b.contest) return contestOrder(a.contest) - contestOrder(b.contest)
+    if (a.category !== b.category) return contestOrder(a.category) - contestOrder(b.category)
     if (b.laps !== a.laps) return b.laps - a.laps
     if (a.lastLapAt && b.lastLapAt && a.lastLapAt !== b.lastLapAt) return a.lastLapAt < b.lastLapAt ? -1 : 1
     if (a.lastLapAt && !b.lastLapAt) return -1
     if (!a.lastLapAt && b.lastLapAt) return 1
     return a.number - b.number
   })
-  const leaderLaps = bikes[0]?.laps ?? 0
-  bikes.forEach((b, i) => {
-    b.rank = i + 1
-    b.gap = leaderLaps - b.laps
-  })
+  const contests: LiveContest[] = []
+  for (const b of bikes) {
+    let c = contests[contests.length - 1]
+    if (!c || c.key !== b.group) {
+      const cn = contestName(race.contestNames, b.contest)
+      const kn = categoryName(race.categoryNames, b.contest, b.category)
+      c = {
+        key: b.group, contest: b.contest, category: b.category, contestName: cn, categoryName: kn,
+        name: [cn, kn].filter(Boolean).join(' · ') || 'Course', bikes: 0, leaderLaps: b.laps,
+      }
+      contests.push(c)
+    }
+    c.bikes++
+    b.rank = c.bikes
+    b.gap = c.leaderLaps - b.laps
+  }
 
   const liveTeams: LiveTeam[] = teams.map((team) => {
     const numbers = team.dossards.map((d) => d.number).sort((a, b) => a - b)
@@ -105,6 +124,7 @@ async function computeLiveState(): Promise<LiveState> {
       spent: s,
       totalLaps: myBikes.reduce((sum, b) => sum + b.laps, 0),
       bestRank: myBikes.length > 0 ? Math.min(...myBikes.map((b) => b.rank)) : null,
+      contest: team.dossards.find((d) => d.contest !== null)?.contest ?? null,
       bikes: numbers,
       pointsRank: 0,
     }
@@ -117,6 +137,7 @@ async function computeLiveState(): Promise<LiveState> {
   return {
     generatedAt: new Date().toISOString(),
     race: { title: race.title, startedAt: race.startedAt, durationMin: race.durationMin, finishedAt: race.finishedAt },
+    contests,
     bikes,
     teams: liveTeams,
     feed,

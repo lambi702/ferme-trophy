@@ -22,7 +22,7 @@ export function parseDossardList(input: unknown): number[] {
  * encore dans le pool). Refuse si un numéro appartient déjà à une AUTRE
  * écurie — on ne vole pas un vélo en silence.
  */
-export async function assignDossards(teamId: string, numbers: number[]) {
+export async function assignDossards(teamId: string, numbers: number[], group: { contest?: number | null; category?: number | null } = {}) {
   const existing = await prisma.dossard.findMany({
     where: { number: { in: numbers } },
     include: { team: { select: { id: true, foulardName: true, unitName: true } } },
@@ -33,8 +33,12 @@ export async function assignDossards(teamId: string, numbers: number[]) {
       error: `Dossard déjà attribué : ${conflicts.map((d) => `#${d.number} (${d.team?.foulardName || d.team?.unitName || 'autre écurie'})`).join(', ')}`,
     }
   }
+  const extra = {
+    ...(group.contest !== undefined ? { contest: group.contest } : {}),
+    ...(group.category !== undefined ? { category: group.category } : {}),
+  }
   for (const number of numbers) {
-    await prisma.dossard.upsert({ where: { number }, create: { number, teamId }, update: { teamId } })
+    await prisma.dossard.upsert({ where: { number }, create: { number, teamId, ...extra }, update: { teamId, ...extra } })
   }
   return { error: null }
 }
@@ -81,4 +85,11 @@ export async function updateTeamProfile(teamId: string, body: Record<string, unk
       await prisma.dossard.updateMany({ where: { number, teamId }, data: { name: bike.name.trim().slice(0, 40) } })
     }
   }
+}
+
+/** "1-2" → { contest: 1, category: 2 } ; "" → null partout ; undefined → rien. */
+export function parseGroup(v: unknown): { contest?: number | null; category?: number | null } {
+  if (v === undefined) return {}
+  const m = String(v).match(/^(\d+)-(\d+)$/)
+  return m ? { contest: Number(m[1]), category: Number(m[2]) } : { contest: null, category: null }
 }

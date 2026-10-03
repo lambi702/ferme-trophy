@@ -15,9 +15,27 @@ export type LiveBike = {
   adjustment: number
   laps: number
   rank: number
-  /** Tours de retard sur le leader (0 pour le leader). */
+  /** Tours de retard sur le leader DE SON ÉPREUVE (0 pour le leader). */
   gap: number
+  /** Parcours (épreuve RaceResult) et catégorie : rang et écart sont calculés dans le groupe. */
+  contest: number | null
+  category: number | null
+  /** Clé du classement (parcours-catégorie), voir LiveContest.key. */
+  group: string
   lastLapAt: string | null
+}
+
+/** Un classement = un (parcours, catégorie), ex. "Grand parcours · Scouts". */
+export type LiveContest = {
+  key: string
+  contest: number | null
+  category: number | null
+  contestName: string
+  categoryName: string
+  /** Nom complet ("Grand parcours · Scouts") ou "Course" s'il n'y a qu'un classement sans nom. */
+  name: string
+  bikes: number
+  leaderLaps: number
 }
 
 export type LiveTeam = {
@@ -33,6 +51,7 @@ export type LiveTeam = {
   spent: number
   totalLaps: number
   bestRank: number | null
+  contest: number | null
   bikes: number[]
   pointsRank: number
 }
@@ -72,6 +91,8 @@ export type LiveRace = {
 export type LiveState = {
   generatedAt: string
   race: LiveRace
+  /** Épreuves dans l'ordre d'affichage (une seule entrée `id: null` si pas d'épreuves). */
+  contests: LiveContest[]
   bikes: LiveBike[]
   teams: LiveTeam[]
   feed: FeedItem[]
@@ -84,6 +105,18 @@ export function teamDisplayName(t: { foulardName?: string; unitName?: string; na
   if (t.unitName) return t.unitName
   if (bikes.length > 0) return `Écurie #${bikes[0]}`
   return 'Écurie sans nom'
+}
+
+export const groupKey = (contest: number | null, category: number | null) => `${contest ?? '_'}-${category ?? '_'}`
+
+export function contestName(names: Record<string, string> | undefined, id: number | null) {
+  if (id === null) return ''
+  return names?.[String(id)]?.trim() || `Épreuve ${id}`
+}
+
+export function categoryName(names: Record<string, string> | undefined, contest: number | null, category: number | null) {
+  if (category === null) return ''
+  return names?.[groupKey(contest, category)]?.trim() || `Catégorie ${category}`
 }
 
 export function bikeLabel(b: { name: string; number: number }) {

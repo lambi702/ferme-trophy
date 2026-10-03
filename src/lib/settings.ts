@@ -49,6 +49,10 @@ export type RaceConfig = {
   startedAt: string | null
   durationMin: number
   finishedAt: string | null
+  /** Noms des parcours (épreuves RaceResult) : { "1": "Grand parcours", "2": "Petit parcours" }. */
+  contestNames: Record<string, string>
+  /** Noms des catégories par parcours : { "1-1": "Scouts", "1-2": "Scoutes & Guides", ... }. */
+  categoryNames: Record<string, string>
 }
 
 const DEFAULT_TIMING: Omit<TimingConfig, 'pushToken'> = {
@@ -71,6 +75,8 @@ const DEFAULT_RACE: RaceConfig = {
   startedAt: null,
   durationMin: 240,
   finishedAt: null,
+  contestNames: {},
+  categoryNames: {},
 }
 
 export function newPushToken() {
@@ -135,6 +141,16 @@ export async function updateRaceConfig(patch: Partial<RaceConfig>): Promise<Race
   if (patch.durationMin !== undefined) next.durationMin = clamp(Number(patch.durationMin), 0, 24 * 60, 240)
   if (patch.startedAt !== undefined) next.startedAt = patch.startedAt ? new Date(patch.startedAt).toISOString() : null
   if (patch.finishedAt !== undefined) next.finishedAt = patch.finishedAt ? new Date(patch.finishedAt).toISOString() : null
+  for (const [field, keyRe] of [['contestNames', /^\d+$/], ['categoryNames', /^\d+-\d+$/]] as const) {
+    const value = patch[field]
+    if (value && typeof value === 'object') {
+      next[field] = Object.fromEntries(
+        Object.entries(value)
+          .filter(([k, v]) => keyRe.test(k) && typeof v === 'string')
+          .map(([k, v]) => [k, (v as string).trim().slice(0, 40)]),
+      )
+    }
+  }
   await writeSetting('race', next)
   return next
 }

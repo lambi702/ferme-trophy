@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useLive, useNow } from '@/lib/useLive'
 import { useRaceAnimations } from '@/lib/useRaceAnimations'
-import type { FeedItem, LiveBike, LiveState } from '@/lib/live-types'
+import type { FeedItem, LiveBike, LiveContest, LiveState } from '@/lib/live-types'
 import { bikeLabel } from '@/lib/live-types'
 import { clockTime, racePhase, relTime, signed, textOn } from '@/lib/format'
 import { feedSentence } from '@/components/ui'
@@ -46,7 +46,7 @@ export default function EcranPage() {
         <>
           <Header data={data} live={live} stale={stale} />
           <div className="grid min-h-0 flex-1" style={{ gridTemplateColumns: '1.8fr 1fr', gap: '1.2vw', padding: '0 1.4vw 1.4vw' }}>
-            <Tower bikes={data.bikes} />
+            <Tower bikes={data.bikes} contests={data.contests} />
             <aside className="flex min-h-0 flex-col" style={{ gap: '1.2vw' }}>
               <PointsStandings data={data} />
               <Radio feed={data.feed} />
@@ -112,7 +112,34 @@ function Header({ data, live, stale }: { data: LiveState; live: boolean; stale: 
 
 // --- Tour de chronométrage (classement vélos) ------------------------------
 
-function Tower({ bikes }: { bikes: LiveBike[] }) {
+type TowerColumn = { title: string; bikes: LiveBike[] }
+type TowerPage = { title: string; columns: TowerColumn[] }
+
+/**
+ * Découpe le classement en pages pour la TV : une page par parcours, une
+ * colonne par catégorie (2 max par page), 18 lignes max par colonne.
+ * Sans parcours/catégories : simple classement découpé en colonnes de 18.
+ */
+function buildPages(bikes: LiveBike[], contests: LiveContest[]): TowerPage[] {
+  const ROWS = 18
+  const columns: (TowerColumn & { contest: number | null; contestName: string })[] = []
+  for (const c of contests) {
+    const group = bikes.filter((b) => b.group === c.key)
+    for (let i = 0; i < group.length; i += ROWS) {
+      const part = group.length > ROWS ? ` (${i + 1}–${Math.min(group.length, i + ROWS)})` : ''
+      columns.push({ title: (c.categoryName || c.name) + part, bikes: group.slice(i, i + ROWS), contest: c.contest, contestName: c.contestName })
+    }
+  }
+  const pages: TowerPage[] = []
+  for (const col of columns) {
+    const last = pages[pages.length - 1] as (TowerPage & { contest?: number | null }) | undefined
+    if (last && last.columns.length < 2 && last.contest === col.contest) last.columns.push(col)
+    else pages.push(Object.assign({ title: col.contestName || 'Classement course', columns: [col] }, { contest: col.contest }))
+  }
+  return pages.length ? pages : [{ title: 'Classement course', columns: [] }]
+}
+
+function Tower({ bikes, contests }: { bikes: LiveBike[]; contests: LiveContest[] }) {
   const ref = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const anim = useRaceAnimations(bikes)
@@ -126,67 +153,67 @@ function Tower({ bikes }: { bikes: LiveBike[] }) {
     return () => ro.disconnect()
   }, [])
 
-  // Lisibilité TV : jamais plus de 18 lignes par colonne ni plus de 2 colonnes.
-  // Au-delà de 36 vélos → pages de 36 qui défilent (le leader est toujours en page 1).
-  const ROWS = 18
-  const PAGE = ROWS * 2
-  const n = bikes.length
-  const pages = Math.max(1, Math.ceil(n / PAGE))
+  const pages = buildPages(bikes, contests)
   const [page, setPage] = useState(0)
   useEffect(() => {
-    if (pages <= 1) return setPage(0)
-    const t = setInterval(() => setPage((p) => (p + 1) % pages), 12000)
+    if (pages.length <= 1) return setPage(0)
+    const t = setInterval(() => setPage((p) => (p + 1) % pages.length), 15000)
     return () => clearInterval(t)
-  }, [pages])
-  const current = Math.min(page, pages - 1)
-  const shown = pages > 1 ? bikes.slice(current * PAGE, current * PAGE + PAGE) : bikes
-  const cols = n <= ROWS ? 1 : 2
-  const perCol = pages > 1 ? ROWS : Math.max(1, Math.ceil(n / cols))
+  }, [pages.length])
+  const current = pages[Math.min(page, pages.length - 1)]
+  const multiColumn = current.columns.length > 1
+  const headerH = multiColumn || contests.length > 1 ? size.h * 0.06 : 0
+  const maxRows = Math.max(1, ...current.columns.map((c) => c.bikes.length))
   const gap = Math.max(3, size.h * 0.006)
-  const rowH = size.h > 0 ? Math.min(size.h / perCol, size.h / 7) : 0
+  const rowH = size.h > 0 ? Math.min((size.h - headerH) / maxRows, size.h / 7) : 0
+  const cols = Math.max(1, current.columns.length)
   const colW = size.w > 0 ? (size.w - (cols - 1) * gap * 3) / cols : 0
 
   return (
     <section className="flex min-h-0 flex-col rounded-[1.2vw] border border-white/[0.07] bg-white/[0.025]" style={{ padding: '1.2vh 1vw' }}>
       <div className="flex shrink-0 items-baseline justify-between" style={{ marginBottom: '1vh' }}>
-        <h2 className="font-mono-race tracking-wide" style={{ fontSize: '3vh' }}>
-          <span className="text-ft-red">▌</span>CLASSEMENT COURSE
+        <h2 className="font-mono-race uppercase tracking-wide" style={{ fontSize: '3vh' }}>
+          <span className="text-ft-red">▌</span>{current.title}
         </h2>
         <p className="font-bold uppercase tracking-[0.2em] text-white/40" style={{ fontSize: '1.5vh' }}>
-          {pages > 1 && (
-            <span className="text-white/70">
-              positions {current * PAGE + 1}–{Math.min(n, (current + 1) * PAGE)} · page {current + 1}/{pages} ·{' '}
-            </span>
-          )}
-          {n} vélos en piste
+          {pages.length > 1 && <span className="text-white/70">page {Math.min(page, pages.length - 1) + 1}/{pages.length} · </span>}
+          {bikes.length} vélos en piste
         </p>
       </div>
       {/* Le conteneur mesuré reste STABLE (sinon l'observer mesure un nœud détaché → 0 px) ;
           seul le calque intérieur est recréé à chaque page pour l'animation. */}
       <div ref={ref} className="relative min-h-0 flex-1">
-        <div key={pages > 1 ? `p${current}` : 'all'} className={`absolute inset-0 ${pages > 1 ? 'slide-up' : ''}`}>
-        {n === 0 && (
-          <p className="flex h-full items-center justify-center font-mono-race text-white/30" style={{ fontSize: '3.5vh' }}>En attente des inscriptions…</p>
-        )}
-        {rowH > 0 && shown.map((b, i) => {
-          const col = Math.floor(i / perCol)
-          const row = i % perCol
-          return (
-            <TowerRow
-              key={b.dossardId}
-              bike={b}
-              top={row * rowH}
-              left={col * (colW + gap * 3)}
-              width={colW}
-              height={rowH - gap}
-              fontBase={Math.min(rowH - gap, colW / 9)}
-              flashKey={anim.flashKey(b.number)}
-              move={anim.move(b.number)}
-              now={now}
-            />
-          )
-        })}
-      </div>
+        <div key={`p${page}`} className={`absolute inset-0 ${pages.length > 1 ? 'slide-up' : ''}`}>
+          {bikes.length === 0 && (
+            <p className="flex h-full items-center justify-center font-mono-race text-white/30" style={{ fontSize: '3.5vh' }}>En attente des inscriptions…</p>
+          )}
+          {rowH > 0 && current.columns.map((col, ci) => (
+            <div key={col.title}>
+              {headerH > 0 && (
+                <p
+                  className="absolute truncate font-mono-race uppercase tracking-[0.15em] text-ft-gold"
+                  style={{ left: ci * (colW + gap * 3), width: colW, top: 0, height: headerH, fontSize: headerH * 0.55, lineHeight: `${headerH}px` }}
+                >
+                  {col.title} <span className="text-white/35">· {col.bikes.length} vélos</span>
+                </p>
+              )}
+              {col.bikes.map((b, i) => (
+                <TowerRow
+                  key={b.dossardId}
+                  bike={b}
+                  top={headerH + i * rowH}
+                  left={ci * (colW + gap * 3)}
+                  width={colW}
+                  height={rowH - gap}
+                  fontBase={Math.min(rowH - gap, colW / 9)}
+                  flashKey={anim.flashKey(b.number)}
+                  move={anim.move(b.number)}
+                  now={now}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -353,7 +380,7 @@ type Announcement = { id: string; tone: 'green' | 'red' | 'gold'; kicker: string
 
 function Announcer({ data }: { data: LiveState }) {
   const seenFeed = useRef<Set<string> | null>(null)
-  const prevLeader = useRef<number | null | undefined>(undefined)
+  const prevLeader = useRef<Map<string, number> | undefined>(undefined)
   const [queue, setQueue] = useState<Announcement[]>([])
   const current = queue[0]
 
@@ -375,18 +402,24 @@ function Announcer({ data }: { data: LiveState }) {
     }
     seenFeed.current = new Set(data.feed.map((i) => i.id))
 
-    const leader = data.bikes[0] && data.bikes[0].laps > 0 ? data.bikes[0] : null
-    if (prevLeader.current !== undefined && leader && leader.number !== prevLeader.current) {
-      additions.push({
-        id: `leader_${leader.number}_${Date.now()}`,
-        tone: 'gold',
-        kicker: 'NOUVEAU LEADER',
-        title: `#${leader.number} ${bikeLabel(leader)}`,
-        detail: `${leader.teamEmoji} ${leader.teamName}`,
-        value: `${leader.laps} TOURS`,
-      })
+    // Nouveau leader : vérifié dans CHAQUE classement (parcours · catégorie).
+    const leaders = new Map<string, LiveBike>()
+    for (const b of data.bikes) if (b.rank === 1 && b.laps > 0) leaders.set(b.group, b)
+    if (prevLeader.current !== undefined) {
+      for (const [group, leader] of leaders) {
+        if (prevLeader.current.get(group) === leader.number) continue
+        const contest = data.contests.find((c) => c.key === group)
+        additions.push({
+          id: `leader_${group}_${leader.number}_${Date.now()}`,
+          tone: 'gold',
+          kicker: `NOUVEAU LEADER${contest && data.contests.length > 1 ? ` · ${contest.name.toUpperCase()}` : ''}`,
+          title: `#${leader.number} ${bikeLabel(leader)}`,
+          detail: `${leader.teamEmoji} ${leader.teamName}`,
+          value: `${leader.laps} TOURS`,
+        })
+      }
     }
-    prevLeader.current = leader?.number ?? null
+    prevLeader.current = new Map([...leaders].map(([g, b]) => [g, b.number]))
 
     if (additions.length) setQueue((q) => [...q, ...additions].slice(-6))
   }, [data])

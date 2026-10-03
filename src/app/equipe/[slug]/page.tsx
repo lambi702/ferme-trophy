@@ -133,7 +133,7 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
       <section className="mt-3 grid grid-cols-3 gap-2">
         <Stat label="Points" value={liveTeam?.points ?? '—'} tone="gold" sub={liveTeam ? `#${liveTeam.pointsRank} au général` : undefined} />
         <Stat label="Tours" value={liveTeam?.totalLaps ?? '—'} sub={plural(detail.bikes.length, 'vélo')} />
-        <Stat label="Meilleur vélo" value={liveTeam?.bestRank ? `P${liveTeam.bestRank}` : '—'} sub={live ? `sur ${live.bikes.length}` : undefined} />
+        <Stat label="Meilleur vélo" value={liveTeam?.bestRank ? `P${liveTeam.bestRank}` : '—'} sub={live ? `sur ${live.contests.find((c) => c.key === liveBikes[0]?.group)?.bikes ?? live.bikes.length}` : undefined} />
       </section>
 
       {/* Vélos */}
@@ -148,6 +148,7 @@ export default function EquipePage({ params }: { params: { slug: string } }) {
               <div className="min-w-0 flex-1">
                 <p className="truncate font-bold">{bikeLabel(b)}</p>
                 <p className="text-xs text-white/45">
+                  {live && live.contests.length > 1 && <span className="font-semibold text-white/70">{live.contests.find((c) => c.key === b.group)?.name} · </span>}
                   {b.lastLapAt ? `Dernier tour ${relTime(b.lastLapAt, now)}` : 'Pas encore de tour'}
                   {b.gap > 0 && ` · ${b.gap} T du leader`}
                 </p>

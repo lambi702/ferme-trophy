@@ -14,6 +14,7 @@ export default function CoursePage() {
       {({ toast }) => (
         <div className="space-y-6">
           <ClockCard toast={toast} />
+          <NamesCard toast={toast} />
           <CorrectionCard toast={toast} />
           <DangerZone toast={toast} />
         </div>
@@ -148,6 +149,38 @@ function DangerZone({ toast }: { toast: Toast }) {
         <p className="flex-1 text-sm text-white/55"><b>Remise à zéro complète</b> : tout ce qui précède + écuries et dossards. Garde comptes comité/organisateurs, catalogue, réglages chrono.</p>
         <button onClick={() => reset('event', 'Effacer TOUTES les écuries, dossards, tours et points ?')} className="btn-red px-4 py-2 text-sm">Tout effacer…</button>
       </div>
+    </section>
+  )
+}
+
+type RaceNames = { contestNames: Record<string, string>; categoryNames: Record<string, string> }
+
+// Noms des parcours et catégories (= les 4 classements), affichés partout.
+function NamesCard({ toast }: { toast: Toast }) {
+  const [names, setNames] = useState<RaceNames | null>(null)
+  useEffect(() => {
+    api<RaceNames>('/api/admin/race').then(({ ok, data }) => ok && setNames({ contestNames: data.contestNames ?? {}, categoryNames: data.categoryNames ?? {} }))
+  }, [])
+  if (!names) return null
+  const save = async () => {
+    const { ok, data } = await api('/api/admin/race', 'PUT', names)
+    if (!ok) return toast(data.error ?? 'Erreur', 'error')
+    toast('Noms enregistrés ✓')
+  }
+  const setC = (k: string, v: string) => setNames({ ...names, contestNames: { ...names.contestNames, [k]: v } })
+  const setK = (k: string, v: string) => setNames({ ...names, categoryNames: { ...names.categoryNames, [k]: v } })
+  return (
+    <section className="card space-y-3 p-4">
+      <h2 className="font-mono-race text-xl">🏷️ Parcours & catégories</h2>
+      <p className="text-sm text-white/55">Un classement par parcours (= « Épreuve » RaceResult) et par catégorie (déduite de la section).</p>
+      {['1', '2'].map((c) => (
+        <div key={c} className="grid gap-2 rounded-xl bg-white/[0.03] p-3 sm:grid-cols-3">
+          <label className="text-xs text-white/50">Parcours / épreuve {c}<input value={names.contestNames[c] ?? ''} onChange={(e) => setC(c, e.target.value)} placeholder={`Épreuve ${c}`} className="input mt-1 py-2" /></label>
+          <label className="text-xs text-white/50">Catégorie 1<input value={names.categoryNames[`${c}-1`] ?? ''} onChange={(e) => setK(`${c}-1`, e.target.value)} placeholder="Catégorie 1" className="input mt-1 py-2" /></label>
+          <label className="text-xs text-white/50">Catégorie 2<input value={names.categoryNames[`${c}-2`] ?? ''} onChange={(e) => setK(`${c}-2`, e.target.value)} placeholder="Catégorie 2" className="input mt-1 py-2" /></label>
+        </div>
+      ))}
+      <button onClick={save} className="btn-red px-4 py-2 text-sm">Enregistrer</button>
     </section>
   )
 }

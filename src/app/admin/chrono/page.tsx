@@ -28,7 +28,9 @@ type TimingInfo = {
     lastPollAt?: string; lastPollOk?: boolean; lastPollError?: string; lastPollSummary?: string
     lastPushAt?: string; lastPushSummary?: string; lastPushError?: string
   }
-  recent: { id: string; dossardNumber: number; timestamp: string; source: string; createdAt: string }[]
+  recent: { id: string; dossardNumber: number; timestamp: string; source: string; createdAt: string; mats: string[] }[]
+  mats: { total: number; withMat: number; both: number; perMat: { mat: string; seen: number; missed: number; lastAt: string }[] }
+  unknownChips: { chip: string; count: number; lastAt: string }[]
   sources: { source: string; count: number; lastAt: string | null }[]
   orphanBibs: { number: number; count: number }[]
 }
@@ -81,6 +83,8 @@ function Chrono({ toast }: { toast: Toast }) {
   return (
     <div className="space-y-6">
       <ModeCard config={config} status={status} now={now} onMode={(mode) => save({ mode }, `Mode chrono : ${mode === 'off' ? 'arrêté' : mode === 'mock' ? 'simulation' : 'interrogation RaceResult'}`)} />
+
+      <MatsCard info={info} now={now} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <PushCard config={config} status={status} now={now} save={save} />
@@ -264,14 +268,14 @@ function AdvancedCard({ config, save }: { config: Config; save: (p: Partial<Conf
           </div>
         </div>
         <div>
-          <label className="label">Anti-doublon : écart minimum entre 2 passages d&apos;un même dossard (secondes)</label>
+          <label className="label">Fusion 2 tapis / anti-doublon : écart minimum entre 2 passages d&apos;un même dossard (secondes)</label>
           <input value={form.minLapSeconds} onChange={(e) => setForm({ ...form, minLapSeconds: e.target.value.replace(/\D/g, '') })} className="input w-28" />
-          <p className="mt-1 text-xs text-white/40">Un tapis peut lire 2× le même vélo. Mets un peu moins que le tour le plus rapide possible.</p>
+          <p className="mt-1 text-xs text-white/40">Les 2 tapis côte à côte lisent chaque vélo 2× à quelques dixièmes d&apos;écart : tout ce qui tombe dans cette fenêtre compte pour UN passage. Mets nettement moins que le tour le plus rapide possible.</p>
         </div>
         <div>
           <label className="label">Point de chrono à garder (vide = tous)</label>
-          <input value={form.timingPoint} onChange={(e) => setForm({ ...form, timingPoint: e.target.value })} placeholder="ex : STARTFINISH" className="input w-56" />
-          <p className="mt-1 text-xs text-white/40">Si O&apos;Top envoie plusieurs tapis (départ, intermédiaire…), on ne compte que celui-ci.</p>
+          <input value={form.timingPoint} onChange={(e) => setForm({ ...form, timingPoint: e.target.value })} placeholder="ex : TAPIS1, TAPIS2" className="input w-72" />
+          <p className="mt-1 text-xs text-white/40">Plusieurs possibles, séparés par une virgule (2 tapis = parfois 2 points de chrono). Les autres points (départ, intermédiaire…) sont ignorés.</p>
         </div>
         <div>
           <label className="label">Colonnes forcées — nom, ou numéro (1, 2, 3…) si pas d&apos;en-tête. Vide = détection auto</label>
@@ -345,7 +349,7 @@ function RecentCard({ info, now }: { info: TimingInfo; now: number }) {
         {info.recent.map((e) => (
           <div key={e.id} className="flex items-center justify-between rounded-lg bg-white/[0.03] px-3 py-1.5 text-sm">
             <span className="font-mono-race text-lg">#{e.dossardNumber}</span>
-            <span className="text-xs text-white/45">{SOURCE_LABEL[e.source] ?? e.source}</span>
+            <span className="text-xs text-white/45">{SOURCE_LABEL[e.source] ?? e.source}{e.mats.length > 0 && ` · ${e.mats.length === 1 ? e.mats[0] : `${e.mats.length} tapis ✓`}`}</span>
             <span className="text-xs text-white/45">{new Date(e.timestamp).toLocaleTimeString('fr-BE')} · {relTime(e.createdAt, now)}</span>
           </div>
         ))}
@@ -402,6 +406,65 @@ function ResetLaps({ toast, reload }: { toast: Toast; reload: () => void }) {
         <p className="text-sm text-white/55">Après les tests avec O&apos;Top ou la simulation, juste avant le départ.</p>
       </div>
       <button onClick={reset} className="btn-red px-4 py-2 text-sm">Effacer les passages…</button>
+    </section>
+  )
+}
+
+function MatsCard({ info, now }: { info: TimingInfo; now: number }) {
+  const { mats, unknownChips } = info
+  if (mats.total === 0 && unknownChips.length === 0) {
+    return (
+      <section className="card p-4">
+        <h2 className="font-mono-race text-xl">🟰 Double tapis</h2>
+        <p className="mt-1 text-sm text-white/55">
+          Les 2 tapis côte à côte sont fusionnés automatiquement : un vélo lu par les deux = 1 tour ; lu par un seul = 1 tour aussi (l&apos;autre l&apos;a raté).
+          La santé de chaque tapis s&apos;affichera ici dès les premiers passages RaceResult.
+        </p>
+      </section>
+    )
+  }
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0)
+  return (
+    <section className="card space-y-3 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-mono-race text-xl">🟰 Double tapis — santé</h2>
+        <p className="text-sm text-white/55">
+          {mats.total} passage(s) · <span className="text-ft-green">{mats.both} vus par les 2 tapis</span>
+          {mats.withMat > mats.both && <span className="text-ft-gold"> · {mats.withMat - mats.both} rattrapés par un seul</span>}
+        </p>
+      </div>
+      {mats.perMat.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {mats.perMat.map((m) => {
+            const rate = pct(m.seen, mats.withMat)
+            const bad = mats.withMat >= 10 && rate < 90
+            return (
+              <div key={m.mat} className={`rounded-xl p-3 ${bad ? 'bg-ft-red/15' : 'bg-white/[0.04]'}`}>
+                <div className="flex items-baseline justify-between">
+                  <p className="font-bold">{m.mat}</p>
+                  <p className={`font-mono-race text-2xl ${bad ? 'text-ft-red2' : rate >= 98 ? 'text-ft-green' : 'text-ft-gold'}`}>{rate}%</p>
+                </div>
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div className={`h-full ${bad ? 'bg-ft-red' : 'bg-ft-green'}`} style={{ width: `${rate}%` }} />
+                </div>
+                <p className="mt-1.5 text-xs text-white/50">
+                  {m.seen} vus · {m.missed} ratés (rattrapés par l&apos;autre) · dernier {relTime(m.lastAt, now)}
+                </p>
+                {bad && <p className="mt-1 text-xs font-bold text-ft-red2">⚠️ Ce tapis rate beaucoup de passages : prévenir O&apos;Top.</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {mats.perMat.length === 1 && mats.total >= 5 && (
+        <p className="text-sm text-ft-gold">⚠️ Un seul tapis identifié dans les données reçues : soit l&apos;autre ne transmet rien, soit RaceResult fusionne déjà les deux avant de nous envoyer.</p>
+      )}
+      {unknownChips.length > 0 && (
+        <p className="rounded-lg bg-ft-gold/10 p-2.5 text-sm text-ft-gold">
+          ⚠️ Puces reçues sans vélo correspondant (non comptées) : {unknownChips.slice(0, 12).map((c) => `${c.chip} (${c.count}×)`).join(', ')}.
+          Les ajouter via la synchro du fichier RaceResult (Écuries).
+        </p>
+      )}
     </section>
   )
 }
