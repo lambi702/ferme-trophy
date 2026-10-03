@@ -45,6 +45,9 @@ Contexte : O'Top Services (Benjamin Olivier) chronomètre avec **RaceResult sur 
 - Liste des inscrits pour O'Top : `GET /api/export/participants` (CSV `;` UTF-8 BOM, une ligne par vélo : Bib, Lastname=surnom vélo, Firstname=écurie, Club=unité...). Bouton dans l'onglet Écuries.
 - **Le mode simulation (`mock`) ajoute de FAUX tours** à tous les vélos inscrits : il doit rester sur `off` en prod (défaut). La check-list du tableau de bord le signale.
 
+## Gel du classement public (fin de course)
+Règle dans `/etc/caddy/Caddyfile` (bloc `ft.lambi-house.be`), **inactive tant que `/srv/ft-freeze/live.json` n'existe pas**. Active : le public (tél, écran géant non connecté) reçoit cette photo pour `/api/live` et un 503 sur `/api/live/stream` (le client bascule tout seul en polling → badge SYNC) ; les cookies `ft_org_session`/`ft_admin_session` passent au vrai live ; le reste (dont `/api/timing/push`) n'est jamais touché → le comptage continue. Piloté sans redémarrage ni reload : `scripts/freeze-classement.sh freeze|unfreeze|status` (sur l'hôte). Testé le 2026-10-03 sur une Caddy isolée (64 cas, HTTP/1.1 + HTTP/2) puis en navigateur.
+
 ## Charge
 Testé le 2026-10-01 : 300 clients SSE simultanés + simulation à 1 tick/s → ~9 % CPU, `/api/live` médiane 5 ms / p95 43 ms, aucune connexion qui fuit après déconnexion.
 
