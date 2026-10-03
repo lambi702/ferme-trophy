@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { LiveTeam } from '@/lib/live-types'
 import { TeamBadge, api } from '@/components/ui'
 
-const AMOUNTS = [5, 10, 15, 20, 25, 30, 50, 100]
+// Barème des mini-jeux fixé par le comité : 20 / 40 / 60 uniquement (pas de montant libre).
+const AMOUNTS = [20, 40, 60]
 
 /**
  * Créditer des points mini-jeu : motif → écurie(s) → montant → valider.
@@ -14,8 +15,7 @@ export default function AwardPoints({ teams, toast }: { teams: LiveTeam[]; toast
   const [reason, setReason] = useState('')
   const [recent, setRecent] = useState<string[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [amount, setAmount] = useState<number>(10)
-  const [custom, setCustom] = useState('')
+  const [amount, setAmount] = useState<number>(20)
   const [penalty, setPenalty] = useState(false)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,7 +34,7 @@ export default function AwardPoints({ teams, toast }: { teams: LiveTeam[]; toast
     return teams.filter((t) => `${t.name} ${t.unitName} ${t.sectionName} ${t.bikes.join(' ')}`.toLowerCase().includes(q))
   }, [teams, query])
 
-  const value = (custom ? Math.abs(Number(custom)) || 0 : amount) * (penalty ? -1 : 1)
+  const value = amount * (penalty ? -1 : 1)
   const toggle = (id: string) => {
     const next = new Set(selected)
     if (next.has(id)) next.delete(id)
@@ -118,23 +118,19 @@ export default function AwardPoints({ teams, toast }: { teams: LiveTeam[]; toast
             {penalty ? '➖ Pénalité' : '➕ Gain'}
           </button>
         </div>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {AMOUNTS.map((a) => (
             <button
               key={a}
-              onClick={() => { setAmount(a); setCustom('') }}
-              className={`rounded-xl border py-3 font-mono-race text-xl transition active:scale-95 ${
-                !custom && amount === a ? (penalty ? 'border-ft-red bg-ft-red/20' : 'border-ft-gold bg-ft-gold/15 text-ft-gold') : 'border-white/[0.07] bg-[#141417]'
+              onClick={() => setAmount(a)}
+              className={`rounded-xl border py-5 font-mono-race text-3xl transition active:scale-95 ${
+                amount === a ? (penalty ? 'border-ft-red bg-ft-red/20' : 'border-ft-gold bg-ft-gold/15 text-ft-gold') : 'border-white/[0.07] bg-[#141417]'
               }`}
             >
               {penalty ? '−' : '+'}{a}
             </button>
           ))}
         </div>
-        <input
-          value={custom} onChange={(e) => setCustom(e.target.value.replace(/\D/g, '').slice(0, 5))}
-          inputMode="numeric" placeholder="Autre montant" className="input mt-2 py-2.5"
-        />
       </section>
 
       <div className="above-nav fixed inset-x-0 z-30 px-4">
